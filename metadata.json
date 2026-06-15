@@ -1,0 +1,6 @@
+{
+  "name": "RouteLog",
+  "description": "Logística e otimização de rotas multi-paradas com rastreamento GPS e gestão multi-perfil (Motorista, Vendedor, Gerente e Admin).",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
