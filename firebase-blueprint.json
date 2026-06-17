@@ -1,0 +1,124 @@
+{
+  "collections": {
+    "users": {
+      "description": "Lista de usuários, incluindo motoristas, gerentes, vendedores e administradores",
+      "fields": {
+        "id": "string",
+        "name": "string",
+        "email": "string",
+        "phone": "string",
+        "address": "string",
+        "role": "number",
+        "status": "string",
+        "createdAt": "string",
+        "region": "string?",
+        "plate": "string?",
+        "vehicleModel": "string?"
+      }
+    },
+    "rotas": {
+      "description": "Rotas de entregas e manifesto de paradas para clientes",
+      "fields": {
+        "id": "string",
+        "driverId": "string",
+        "driverName": "string",
+        "driverPlate": "string",
+        "name": "string",
+        "origin": "string",
+        "originLat": "number",
+        "originLng": "number",
+        "stops": "array",
+        "status": "string",
+        "currentStopIndex": "number",
+        "region": "string",
+        "createdAt": "string",
+        "optimized": "boolean",
+        "sentByGerente": "boolean?"
+      }
+    },
+    "locations": {
+      "description": "Rastreamento GPS em tempo real de cada condutor operacional",
+      "fields": {
+        "driverId": "string",
+        "lat": "number",
+        "lng": "number",
+        "heading": "number",
+        "speed": "number",
+        "lastUpdated": "string"
+      }
+    },
+    "chats": {
+      "description": "Mensagens de chat em tempo real escopadas por região corporativa",
+      "fields": {
+        "id": "string",
+        "senderId": "string",
+        "senderName": "string",
+        "senderRole": "number",
+        "region": "string",
+        "message": "string",
+        "audioUrl": "string?",
+        "timestamp": "string"
+      }
+    },
+    "notifications": {
+      "description": "Histórico de alertas do sistema e atualizações de geofence",
+      "fields": {
+        "id": "string",
+        "region": "string",
+        "title": "string",
+        "body": "string",
+        "timestamp": "string",
+        "senderName": "string"
+      }
+    },
+    "pushLogs": {
+      "description": "Relatório de disparos de notificações push do Firebase Cloud Messaging simulados",
+      "fields": {
+        "id": "string",
+        "title": "string",
+        "body": "string",
+        "targetRole": "any",
+        "targetRegion": "string",
+        "sentCount": "number",
+        "timestamp": "string",
+        "success": "boolean",
+        "type": "string"
+      }
+    },
+    "auditLogs": {
+      "description": "Log de auditoria das ações administrativas",
+      "fields": {
+        "id": "string",
+        "adminId": "string",
+        "adminName": "string",
+        "action": "string",
+        "targetUserId": "string",
+        "targetUserName": "string",
+        "details": "string",
+        "timestamp": "string"
+      }
+    },
+    "performanceLogs": {
+      "description": "Métricas de desempenho e telemetria de viagens finalizadas",
+      "fields": {
+        "id": "string",
+        "routeId": "string",
+        "routeName": "string",
+        "driverId": "string",
+        "driverName": "string",
+        "driverPlate": "string",
+        "region": "string",
+        "plannedDistanceKm": "number",
+        "actualDistanceKm": "number",
+        "plannedStopsCount": "number",
+        "completedStopsCount": "number",
+        "startTimestamp": "string",
+        "endTimestamp": "string?",
+        "routeDeviations": "number",
+        "averageTimePerStopMinutes": "number",
+        "status": "string",
+        "stopTelemetry": "array"
+      }
+    }
+  }
+}

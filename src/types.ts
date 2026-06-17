@@ -82,6 +82,7 @@ export interface GPSLocation {
   heading: number;
   speed: number;
   lastUpdated: string;
+  isSharing?: boolean;
 }
 
 export interface ChatMessage {

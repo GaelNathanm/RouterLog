@@ -420,11 +420,20 @@ export default function UserLoginMenu({ users, onLogin, onRegister, onReset, cur
             </button>
           </div>
 
-          <div className="mt-4 p-3 bg-slate-100 rounded-xl space-y-1">
+          <div className="mt-4 p-3 bg-slate-100 rounded-xl space-y-2">
             <span className="font-semibold text-slate-700 text-[10px] block uppercase">Acesso Geral do Administrador</span>
             <p className="text-[11px] text-slate-500 leading-relaxed">
               Autenticação master centralizada com permissões completas para supervisão do fluxo de frotas e auditorias de sistema.
             </p>
+            <button
+              onClick={() => {
+                window.history.pushState({}, '', '/admin-login');
+              }}
+              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-3 bg-slate-900 hover:bg-slate-950 text-white rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all shadow-sm cursor-pointer"
+            >
+              <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
+              Acessar Portal Master (/admin-login)
+            </button>
           </div>
         </div>
       )}

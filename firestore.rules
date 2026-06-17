@@ -1,0 +1,9 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Permite leitura e escrita gerais para fins operacionais compartilhados entre condutores, admin e gerentes
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

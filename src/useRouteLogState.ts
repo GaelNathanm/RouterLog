@@ -4,6 +4,8 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { collection, onSnapshot, doc, deleteDoc } from 'firebase/firestore';
+import { db, seedDatabaseIfEmpty, saveCloudUser, saveCloudRoute, deleteCloudRoute, saveCloudGPSLocation, saveCloudChat, saveCloudNotification, saveCloudAuditLog, saveCloudPerformanceLog, saveCloudPushLog, resetCloudDatabaseAll } from './firebase';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
   ChatMessage, NotificationLog, AuditLogEntry,
@@ -12,7 +14,7 @@ import {
 import { 
   INITIAL_USERS, INITIAL_ROTAS, INITIAL_LOCATIONS, 
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
-  INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_NOTIF_TEMPLATES
+  INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS
 } from './mockData';
 
 const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
@@ -31,50 +33,19 @@ const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: num
 };
 
 export function useRouteLogState() {
-  const [users, setUsers] = useState<RouteUser[]>(() => {
-    const saved = localStorage.getItem('routelog_users');
-    return saved ? JSON.parse(saved) : INITIAL_USERS;
-  });
-
-  const [rotas, setRotas] = useState<Rota[]>(() => {
-    const saved = localStorage.getItem('routelog_rotas');
-    return saved ? JSON.parse(saved) : INITIAL_ROTAS;
-  });
-
-  const [locations, setLocations] = useState<{ [driverId: string]: GPSLocation }>(() => {
-    const saved = localStorage.getItem('routelog_locations');
-    return saved ? JSON.parse(saved) : INITIAL_LOCATIONS;
-  });
-
+  // Local reactive states matched with Firestore Single Source of Truth updates
+  const [users, setUsers] = useState<RouteUser[]>(INITIAL_USERS);
+  const [rotas, setRotas] = useState<Rota[]>(INITIAL_ROTAS);
+  const [locations, setLocations] = useState<{ [driverId: string]: GPSLocation }>(INITIAL_LOCATIONS);
   const [breadcrumbs, setBreadcrumbs] = useState<{ [driverId: string]: { lat: number; lng: number }[] }>(() => {
     const saved = localStorage.getItem('routelog_breadcrumbs');
     return saved ? JSON.parse(saved) : {};
   });
-
-  const [chats, setChats] = useState<ChatMessage[]>(() => {
-    const saved = localStorage.getItem('routelog_chats');
-    return saved ? JSON.parse(saved) : INITIAL_CHAT;
-  });
-
-  const [notifications, setNotifications] = useState<NotificationLog[]>(() => {
-    const saved = localStorage.getItem('routelog_notifications');
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(() => {
-    const saved = localStorage.getItem('routelog_audit');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
-
-  const [performanceLogs, setPerformanceLogs] = useState<RoutePerformanceLog[]>(() => {
-    const saved = localStorage.getItem('routelog_performance');
-    return saved ? JSON.parse(saved) : INITIAL_PERFORMANCE_LOGS;
-  });
-
-  const [pushLogs, setPushLogs] = useState<PushDeliveryLog[]>(() => {
-    const saved = localStorage.getItem('routelog_push_logs');
-    return saved ? JSON.parse(saved) : INITIAL_PUSH_LOGS;
-  });
+  const [chats, setChats] = useState<ChatMessage[]>(INITIAL_CHAT);
+  const [notifications, setNotifications] = useState<NotificationLog[]>(INITIAL_NOTIFICATIONS);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOGS);
+  const [performanceLogs, setPerformanceLogs] = useState<RoutePerformanceLog[]>(INITIAL_PERFORMANCE_LOGS);
+  const [pushLogs, setPushLogs] = useState<PushDeliveryLog[]>(INITIAL_PUSH_LOGS);
 
   const [pushConfig, setPushConfig] = useState<PushConfig>(() => {
     const saved = localStorage.getItem('routelog_push_config');
@@ -89,9 +60,7 @@ export function useRouteLogState() {
   // Simulator control state
   const [currentUser, setCurrentUser] = useState<RouteUser | null>(() => {
     const saved = localStorage.getItem('routelog_curr_user');
-    if (saved) return JSON.parse(saved);
-    // Default to a driver to showcase flows easily (or none to show login screen)
-    return null;
+    return saved ? JSON.parse(saved) : null;
   });
 
   // Admin Impersonation view mode
@@ -100,45 +69,14 @@ export function useRouteLogState() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  // Tracking the interval for simulated real-time GPS movement of active drivers
+  // Tracking reference for live subscriptions and active logs
   const gpsTickRef = useRef<NodeJS.Timeout | null>(null);
+  const unsubsRef = useRef<(() => void)[] | null>(null);
 
-  // Sync to local storage
-  useEffect(() => {
-    localStorage.setItem('routelog_users', JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_rotas', JSON.stringify(rotas));
-  }, [rotas]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_locations', JSON.stringify(locations));
-  }, [locations]);
-
+  // Sync auxiliary states to localStorage as cache
   useEffect(() => {
     localStorage.setItem('routelog_breadcrumbs', JSON.stringify(breadcrumbs));
   }, [breadcrumbs]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_chats', JSON.stringify(chats));
-  }, [chats]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_notifications', JSON.stringify(notifications));
-  }, [notifications]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_audit', JSON.stringify(auditLogs));
-  }, [auditLogs]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_performance', JSON.stringify(performanceLogs));
-  }, [performanceLogs]);
-
-  useEffect(() => {
-    localStorage.setItem('routelog_push_logs', JSON.stringify(pushLogs));
-  }, [pushLogs]);
 
   useEffect(() => {
     localStorage.setItem('routelog_push_config', JSON.stringify(pushConfig));
@@ -152,6 +90,17 @@ export function useRouteLogState() {
     }
   }, [currentUser]);
 
+  // Sync logged in user status in real-time when snapshot list of users updates (e.g. real-time ban/suspend)
+  useEffect(() => {
+    if (currentUser) {
+      const liveUser = users.find(u => u.id === currentUser.id);
+      if (liveUser && liveUser.status !== currentUser.status) {
+        console.log(`REALTIME FORCE SYNC: Logged user status transitioned to ${liveUser.status}`);
+        setCurrentUser(liveUser);
+      }
+    }
+  }, [users, currentUser]);
+
   useEffect(() => {
     if (impersonatingUser) {
       localStorage.setItem('routelog_imp_user', JSON.stringify(impersonatingUser));
@@ -160,6 +109,90 @@ export function useRouteLogState() {
     }
   }, [impersonatingUser]);
 
+  // Firestore Real-Time Subscriptions Setup (Eliminating polling completely)
+  useEffect(() => {
+    let unsubscribed = false;
+
+    const initFirebaseSync = async () => {
+      // Seed if necessary first
+      await seedDatabaseIfEmpty();
+      if (unsubscribed) return;
+
+      // Subscribe to users
+      const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+        const list: RouteUser[] = [];
+        snap.forEach(d => list.push(d.data() as RouteUser));
+        setUsers(list);
+      });
+
+      // Subscribe to routes
+      const unsubRotas = onSnapshot(collection(db, 'rotas'), (snap) => {
+        const list: Rota[] = [];
+        snap.forEach(d => list.push(d.data() as Rota));
+        setRotas(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      });
+
+      // Subscribe to driver current locations
+      const unsubLocations = onSnapshot(collection(db, 'locations'), (snap) => {
+        const map: { [driverId: string]: GPSLocation } = {};
+        snap.forEach(d => {
+          const loc = d.data() as GPSLocation;
+          map[loc.driverId] = loc;
+        });
+        setLocations(map);
+      });
+
+      // Subscribe to active chats
+      const unsubChats = onSnapshot(collection(db, 'chats'), (snap) => {
+        const list: ChatMessage[] = [];
+        snap.forEach(d => list.push(d.data() as ChatMessage));
+        setChats(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
+      });
+
+      // Subscribe to notifications
+      const unsubNotifs = onSnapshot(collection(db, 'notifications'), (snap) => {
+        const list: NotificationLog[] = [];
+        snap.forEach(d => list.push(d.data() as NotificationLog));
+        setNotifications(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+      });
+
+      // Subscribe to auditLogs
+      const unsubAudits = onSnapshot(collection(db, 'auditLogs'), (snap) => {
+        const list: AuditLogEntry[] = [];
+        snap.forEach(d => list.push(d.data() as AuditLogEntry));
+        setAuditLogs(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+      });
+
+      // Subscribe to performanceLogs
+      const unsubPerformance = onSnapshot(collection(db, 'performanceLogs'), (snap) => {
+        const list: RoutePerformanceLog[] = [];
+        snap.forEach(d => list.push(d.data() as RoutePerformanceLog));
+        setPerformanceLogs(list.sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime()));
+      });
+
+      // Subscribe to pushLogs
+      const unsubPushLogs = onSnapshot(collection(db, 'pushLogs'), (snap) => {
+        const list: PushDeliveryLog[] = [];
+        snap.forEach(d => list.push(d.data() as PushDeliveryLog));
+        setPushLogs(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
+      });
+
+      unsubsRef.current = [
+        unsubUsers, unsubRotas, unsubLocations, unsubChats, 
+        unsubNotifs, unsubAudits, unsubPerformance, unsubPushLogs
+      ];
+    };
+
+    initFirebaseSync();
+
+    return () => {
+      unsubscribed = true;
+      if (unsubsRef.current) {
+        unsubsRef.current.forEach(fn => fn());
+      }
+    };
+  }, []);
+
   // Active user represents the current session (can be impersonated)
   const activeSessionUser = impersonatingUser ? impersonatingUser : currentUser;
 
@@ -167,285 +200,106 @@ export function useRouteLogState() {
   useEffect(() => {
     // Look for active routes and move driver towards the next pending stop sequentially
     gpsTickRef.current = setInterval(() => {
-      setRotas(prevRotas => {
-        let updated = false;
-        const newRotas = prevRotas.map(rota => {
-          if (rota.status === 'active') {
-            const stops = rota.stops;
-            const currentStopIdx = rota.currentStopIndex;
-            
-            if (currentStopIdx < stops.length) {
-              const targetStop = stops[currentStopIdx];
-              const driverLoc = locations[rota.driverId] || {
-                driverId: rota.driverId,
-                lat: rota.originLat,
-                lng: rota.originLng,
-                heading: 0,
-                speed: 40,
-                lastUpdated: new Date().toISOString()
+      rotas.forEach(async (rota) => {
+        if (rota.status === 'active') {
+          const stops = rota.stops;
+          const currentStopIdx = rota.currentStopIndex;
+          
+          if (currentStopIdx < stops.length) {
+            const targetStop = stops[currentStopIdx];
+            const driverLoc = locations[rota.driverId] || {
+              driverId: rota.driverId,
+              lat: rota.originLat,
+              lng: rota.originLng,
+              heading: 0,
+              speed: 40,
+              lastUpdated: new Date().toISOString()
+            };
+
+            if (driverLoc.isSharing === false) {
+              // Location sharing is paused! Do not update or simulate movement for this driver.
+              return;
+            }
+
+            const dLat = targetStop.lat - driverLoc.lat;
+            const dLng = targetStop.lng - driverLoc.lng;
+            const distance = Math.sqrt(dLat * dLat + dLng * dLng);
+
+            if (distance < 0.003) {
+              // Arrived at stop! Complete it.
+              const newStops = stops.map((item, idx) => 
+                idx === currentStopIdx ? { ...item, status: 'completed' as const } : item
+              );
+              
+              const updatedRota: Rota = {
+                ...rota,
+                stops: newStops,
+                currentStopIndex: currentStopIdx + 1
               };
+              await saveCloudRoute(updatedRota);
 
-              // Interpolate coordinate step
-              const dLat = targetStop.lat - driverLoc.lat;
-              const dLng = targetStop.lng - driverLoc.lng;
-              const distance = Math.sqrt(dLat * dLat + dLng * dLng);
+              // Add notification about delivery
+              const newNotif: NotificationLog = {
+                id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+                region: rota.region,
+                title: `Entrega Realizada - Rota ${rota.name}`,
+                body: `O motorista ${rota.driverName} completou a entrega para: ${targetStop.clientName}`,
+                timestamp: new Date().toISOString(),
+                senderName: rota.driverName
+              };
+              await saveCloudNotification(newNotif);
 
-              // Speeds and offsets
-              if (distance < 0.003) {
-                // Arrived at stop! Complete it.
-                updated = true;
-                const newStops = stops.map((item, idx) => 
-                  idx === currentStopIdx ? { ...item, status: 'completed' as const } : item
-                );
-                
-                // Add notification about delivery
-                setNotifications(prevNotifs => [
+              // Record Stop Performance Telemetry
+              const timeSpent = Math.floor(Math.random() * 11) + 12; // 12-22 min spent
+              const departureTime = new Date();
+              const arrivalTime = new Date(departureTime.getTime() - timeSpent * 60000);
+              
+              const pRecord = performanceLogs.find(p => p.routeId === rota.id);
+              if (pRecord) {
+                const updatedTelemetry: StopTelemetry[] = [
+                  ...pRecord.stopTelemetry,
                   {
-                    id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-                    region: rota.region,
-                    title: `Entrega Realizada - Rota ${rota.name}`,
-                    body: `O motorista ${rota.driverName} completou a entrega para: ${targetStop.clientName}`,
-                    timestamp: new Date().toISOString(),
-                    senderName: rota.driverName
-                  },
-                  ...prevNotifs
-                ]);
-
-                // Record Stop Performance Telemetry
-                const timeSpent = Math.floor(Math.random() * 11) + 12; // 12-22 min spent
-                const departureTime = new Date();
-                const arrivalTime = new Date(departureTime.getTime() - timeSpent * 60000);
-                
-                setPerformanceLogs(prevPerf => {
-                  return prevPerf.map(p => {
-                    if (p.routeId === rota.id) {
-                      const updatedTelemetry: StopTelemetry[] = [
-                        ...p.stopTelemetry,
-                        {
-                          stopId: targetStop.id,
-                          clientName: targetStop.clientName,
-                          plannedLat: targetStop.lat,
-                          plannedLng: targetStop.lng,
-                          arrivalTimestamp: arrivalTime.toISOString(),
-                          departureTimestamp: departureTime.toISOString(),
-                          timeSpentMinutes: timeSpent
-                        }
-                      ];
-                      
-                      const hasDeviation = Math.random() > 0.6;
-                      const addedDist = hasDeviation ? 0.8 : 0.1;
-                      const nextActualDist = Math.round((p.actualDistanceKm + addedDist) * 10) / 10;
-                      const nextDeviations = p.routeDeviations + (hasDeviation ? 1 : 0);
-
-                      return {
-                        ...p,
-                        completedStopsCount: p.completedStopsCount + 1,
-                        stopTelemetry: updatedTelemetry,
-                        actualDistanceKm: nextActualDist,
-                        routeDeviations: nextDeviations
-                      };
-                    }
-                    return p;
-                  });
-                });
-
-                // Dispatch FCM mock push notification for STOPSTATUS
-                const titleStr = 'Entrega Concluída Checklist ✅';
-                const bodyStr = `A parada #${currentStopIdx + 1} (${targetStop.clientName}) da rota "${rota.name}" foi concluída. Tempo de permanência: ${timeSpent} minutos.`;
-                
-                setPushLogs(prevPushes => [
-                  {
-                    id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-                    title: titleStr,
-                    body: bodyStr,
-                    targetRole: UserRole.GERENTE, // Focused on Managers
-                    targetRegion: rota.region,  // Scoped to region
-                    sentCount: 1,
-                    timestamp: new Date().toISOString(),
-                    success: true,
-                    type: 'status_parada'
-                  },
-                  ...prevPushes
-                ]);
-
-                // Fire custom FCM toast event
-                window.dispatchEvent(new CustomEvent('fcm_notification_received', {
-                  detail: {
-                    title: titleStr,
-                    body: bodyStr,
-                    type: 'status_parada',
-                    region: rota.region,
-                    role: UserRole.GERENTE
+                    stopId: targetStop.id,
+                    clientName: targetStop.clientName,
+                    plannedLat: targetStop.lat,
+                    plannedLng: targetStop.lng,
+                    arrivalTimestamp: arrivalTime.toISOString(),
+                    departureTimestamp: departureTime.toISOString(),
+                    timeSpentMinutes: timeSpent
                   }
-                }));
+                ];
+                
+                const hasDeviation = Math.random() > 0.6;
+                const addedDist = hasDeviation ? 0.8 : 0.1;
+                const nextActualDist = Math.round((pRecord.actualDistanceKm + addedDist) * 10) / 10;
+                const nextDeviations = pRecord.routeDeviations + (hasDeviation ? 1 : 0);
 
-                return {
-                  ...rota,
-                  stops: newStops,
-                  currentStopIndex: currentStopIdx + 1
+                const updatedPerf: RoutePerformanceLog = {
+                  ...pRecord,
+                  completedStopsCount: pRecord.completedStopsCount + 1,
+                  stopTelemetry: updatedTelemetry,
+                  actualDistanceKm: nextActualDist,
+                  routeDeviations: nextDeviations
                 };
-              } else {
-                // Move gradually towards the target
-                updated = true;
-                const step = 0.0015; // movement speed step
-                const ratio = step / distance;
-                const nextLat = driverLoc.lat + dLat * ratio;
-                const nextLng = driverLoc.lng + dLng * ratio;
-
-                // Calculate angle for truck direction heading
-                const angle = Math.atan2(dLng, dLat) * (180 / Math.PI);
-
-                setLocations(prevLocs => ({
-                  ...prevLocs,
-                  [rota.driverId]: {
-                    driverId: rota.driverId,
-                    lat: nextLat,
-                    lng: nextLng,
-                    heading: angle >= 0 ? angle : 360 + angle,
-                    speed: 55, // 55 km/h simulated
-                    lastUpdated: new Date().toISOString()
-                  }
-                }));
-
-                setBreadcrumbs(prev => {
-                  const currentList = prev[rota.driverId] || [];
-                  const lastPoint = currentList[currentList.length - 1];
-                  if (lastPoint && Math.abs(lastPoint.lat - nextLat) < 0.0001 && Math.abs(lastPoint.lng - nextLng) < 0.0001) {
-                    return prev;
-                  }
-                  const updatedList = [...currentList, { lat: nextLat, lng: nextLng }].slice(-50); // Keep last 50 points
-                  return {
-                    ...prev,
-                    [rota.driverId]: updatedList
-                  };
-                });
-
-                // GEOFENCING CHECK: If within 500 meters of a stop, update to 'Chegando' and trigger alerts
-                const distToStop = getDistanceInMeters(nextLat, nextLng, targetStop.lat, targetStop.lng);
-                if (distToStop <= 500 && targetStop.status === 'pending') {
-                  const updatedStops = stops.map((item, sIdx) => 
-                    sIdx === currentStopIdx ? { ...item, status: 'Chegando' as const } : item
-                  );
-
-                  const titleStr = 'Motorista Próximo - Geofence 📍';
-                  const bodyStr = `O condutor ${rota.driverName} atingiu o raio de 500m do cliente "${targetStop.clientName}". Status atualizado para 'Chegando'.`;
-
-                  setNotifications(prevNotifs => [
-                    {
-                      id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-                      region: rota.region,
-                      title: titleStr,
-                      body: bodyStr,
-                      timestamp: new Date().toISOString(),
-                      senderName: rota.driverName
-                    },
-                    ...prevNotifs
-                  ]);
-
-                  setPushLogs(prevPushes => [
-                    {
-                      id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}_g`,
-                      title: titleStr,
-                      body: bodyStr,
-                      targetRole: UserRole.GERENTE,
-                      targetRegion: rota.region,
-                      sentCount: 1,
-                      timestamp: new Date().toISOString(),
-                      success: true,
-                      type: 'geofence'
-                    },
-                    {
-                      id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}_v`,
-                      title: titleStr,
-                      body: bodyStr,
-                      targetRole: UserRole.VENDEDOR,
-                      targetRegion: rota.region,
-                      sentCount: 1,
-                      timestamp: new Date().toISOString(),
-                      success: true,
-                      type: 'geofence'
-                    },
-                    ...prevPushes
-                  ]);
-
-                  window.dispatchEvent(new CustomEvent('fcm_notification_received', {
-                    detail: {
-                      title: titleStr,
-                      body: bodyStr,
-                      type: 'status_parada',
-                      region: rota.region,
-                      role: UserRole.GERENTE
-                    }
-                  }));
-
-                  window.dispatchEvent(new CustomEvent('fcm_notification_received', {
-                    detail: {
-                      title: titleStr,
-                      body: bodyStr,
-                      type: 'status_parada',
-                      region: rota.region,
-                      role: UserRole.VENDEDOR
-                    }
-                  }));
-
-                  return {
-                    ...rota,
-                    stops: updatedStops
-                  };
-                }
+                await saveCloudPerformanceLog(updatedPerf);
               }
-            } else {
-              // Completed all stops! Complete the route
-              updated = true;
-              
-              setNotifications(prevNotifs => [
-                {
-                  id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-                  region: rota.region,
-                  title: `Rota Finalizada - ${rota.driverName}`,
-                  body: `A rota de entregas "${rota.name}" foi totalmente concluída com sucesso!`,
-                  timestamp: new Date().toISOString(),
-                  senderName: rota.driverName
-                },
-                ...prevNotifs
-              ]);
 
-              // Update Performance Log to status: completed
-              setPerformanceLogs(prevPerf => {
-                return prevPerf.map(p => {
-                  if (p.routeId === rota.id) {
-                    const avgTime = p.stopTelemetry.length > 0 
-                      ? Math.round(p.stopTelemetry.reduce((sum, s) => sum + s.timeSpentMinutes, 0) / p.stopTelemetry.length)
-                      : 15;
-                    return {
-                      ...p,
-                      status: 'completed',
-                      endTimestamp: new Date().toISOString(),
-                      averageTimePerStopMinutes: avgTime
-                    };
-                  }
-                  return p;
-                });
-              });
-
-              // Dispatch FCM mock push notification for COMPLETED ROUTE
-              const titleStr = 'Rota Finalizada com Sucesso 🌍';
-              const bodyStr = `A rota regional "${rota.name}" do motorista ${rota.driverName} foi totalmente concluída com sucesso!`;
+              // Fire simulated FCM toast push notifications
+              const titleStr = 'Entrega Concluída Checklist ✅';
+              const bodyStr = `A parada #${currentStopIdx + 1} (${targetStop.clientName}) da rota "${rota.name}" foi concluída. Tempo de permanência: ${timeSpent} minutos.`;
               
-              setPushLogs(prevPushes => [
-                {
-                  id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-                  title: titleStr,
-                  body: bodyStr,
-                  targetRole: 'all',
-                  targetRegion: rota.region,
-                  sentCount: 3,
-                  timestamp: new Date().toISOString(),
-                  success: true,
-                  type: 'status_parada'
-                },
-                ...prevPushes
-              ]);
+              const newPush: PushDeliveryLog = {
+                id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+                title: titleStr,
+                body: bodyStr,
+                targetRole: UserRole.GERENTE,
+                targetRegion: rota.region,
+                sentCount: 1,
+                timestamp: new Date().toISOString(),
+                success: true,
+                type: 'status_parada'
+              };
+              await saveCloudPushLog(newPush);
 
               window.dispatchEvent(new CustomEvent('fcm_notification_received', {
                 detail: {
@@ -453,31 +307,161 @@ export function useRouteLogState() {
                   body: bodyStr,
                   type: 'status_parada',
                   region: rota.region,
-                  role: 'all'
+                  role: UserRole.GERENTE
                 }
               }));
 
-              return {
-                ...rota,
-                status: 'completed'
-              };
-            }
-          }
-          return rota;
-        });
+            } else {
+              // Move gradually towards the target
+              const step = 0.0015;
+              const ratio = step / distance;
+              const nextLat = driverLoc.lat + dLat * ratio;
+              const nextLng = driverLoc.lng + dLng * ratio;
+              const angle = Math.atan2(dLng, dLat) * (180 / Math.PI);
 
-        return updated ? newRotas : prevRotas;
+              const nextLoc: GPSLocation = {
+                driverId: rota.driverId,
+                lat: nextLat,
+                lng: nextLng,
+                heading: angle >= 0 ? angle : 360 + angle,
+                speed: 55,
+                lastUpdated: new Date().toISOString()
+              };
+              await saveCloudGPSLocation(nextLoc);
+
+              setBreadcrumbs(prev => {
+                const currentList = prev[rota.driverId] || [];
+                const updatedList = [...currentList, { lat: nextLat, lng: nextLng }].slice(-50);
+                return {
+                  ...prev,
+                  [rota.driverId]: updatedList
+                };
+              });
+
+              // Geofencing Check (Alert close drivers)
+              const distToStop = getDistanceInMeters(nextLat, nextLng, targetStop.lat, targetStop.lng);
+              if (distToStop <= 500 && targetStop.status === 'pending') {
+                const updatedStops = stops.map((item, sIdx) => 
+                  sIdx === currentStopIdx ? { ...item, status: 'Chegando' as const } : item
+                );
+
+                const updatedRota: Rota = {
+                  ...rota,
+                  stops: updatedStops
+                };
+                await saveCloudRoute(updatedRota);
+
+                const titleStr = 'Motorista Próximo - Geofence 📍';
+                const bodyStr = `O condutor ${rota.driverName} atingiu o raio de 500m do cliente "${targetStop.clientName}". Status atualizado para 'Chegando'.`;
+
+                const newNotif: NotificationLog = {
+                  id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+                  region: rota.region,
+                  title: titleStr,
+                  body: bodyStr,
+                  timestamp: new Date().toISOString(),
+                  senderName: rota.driverName
+                };
+                await saveCloudNotification(newNotif);
+
+                // Target FCM alerts
+                const pushMgr: PushDeliveryLog = {
+                  id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}_m`,
+                  title: titleStr,
+                  body: bodyStr,
+                  targetRole: UserRole.GERENTE,
+                  targetRegion: rota.region,
+                  sentCount: 1,
+                  timestamp: new Date().toISOString(),
+                  success: true,
+                  type: 'geofence'
+                };
+                await saveCloudPushLog(pushMgr);
+
+                const pushVend: PushDeliveryLog = {
+                  id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}_v`,
+                  title: titleStr,
+                  body: bodyStr,
+                  targetRole: UserRole.VENDEDOR,
+                  targetRegion: rota.region,
+                  sentCount: 1,
+                  timestamp: new Date().toISOString(),
+                  success: true,
+                  type: 'geofence'
+                };
+                await saveCloudPushLog(pushVend);
+
+                window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+                  detail: { title: titleStr, body: bodyStr, type: 'status_parada', region: rota.region, role: UserRole.GERENTE }
+                }));
+                window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+                  detail: { title: titleStr, body: bodyStr, type: 'status_parada', region: rota.region, role: UserRole.VENDEDOR }
+                }));
+              }
+            }
+          } else {
+            // Completed all stops! Complete the route
+            const updatedRota: Rota = {
+              ...rota,
+              status: 'completed'
+            };
+            await saveCloudRoute(updatedRota);
+
+            const newNotif: NotificationLog = {
+              id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+              region: rota.region,
+              title: `Rota Finalizada - ${rota.driverName}`,
+              body: `A rota de entregas "${rota.name}" foi totalmente concluída com sucesso!`,
+              timestamp: new Date().toISOString(),
+              senderName: rota.driverName
+            };
+            await saveCloudNotification(newNotif);
+
+            const pRecord = performanceLogs.find(p => p.routeId === rota.id);
+            if (pRecord) {
+              const avgTime = pRecord.stopTelemetry.length > 0 
+                ? Math.round(pRecord.stopTelemetry.reduce((sum, s) => sum + s.timeSpentMinutes, 0) / pRecord.stopTelemetry.length)
+                : 15;
+              const updatedPerf: RoutePerformanceLog = {
+                ...pRecord,
+                status: 'completed',
+                endTimestamp: new Date().toISOString(),
+                averageTimePerStopMinutes: avgTime
+              };
+              await saveCloudPerformanceLog(updatedPerf);
+            }
+
+            const titleStr = 'Rota Finalizada com Sucesso 🌍';
+            const bodyStr = `A rota regional "${rota.name}" do motorista ${rota.driverName} foi totalmente concluída com sucesso!`;
+            
+            const pushAll: PushDeliveryLog = {
+              id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+              title: titleStr,
+              body: bodyStr,
+              targetRole: 'all',
+              targetRegion: rota.region,
+              sentCount: 3,
+              timestamp: new Date().toISOString(),
+              success: true,
+              type: 'status_parada'
+            };
+            await saveCloudPushLog(pushAll);
+
+            window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+              detail: { title: titleStr, body: bodyStr, type: 'status_parada', region: rota.region, role: 'all' }
+            }));
+          }
+        }
       });
-    }, 4500); // Trigger micro GPS movement iteration every 4.5 seconds
+    }, 4500);
 
     return () => {
       if (gpsTickRef.current) clearInterval(gpsTickRef.current);
     };
-  }, [locations]);
+  }, [rotas, locations, performanceLogs]);
 
   // Auth Operations
   const handleLogin = (email: string, role?: UserRole) => {
-    // Admin login bypass detection or standard mock system
     if (email === 'admin' || email === 'admin@routelog.com') {
       const admin = users.find(u => u.role === UserRole.ADMIN) || users[0];
       setCurrentUser(admin);
@@ -498,7 +482,6 @@ export function useRouteLogState() {
       return { success: true, user: matched };
     }
 
-    // Default if not found and role specified (simulate self registration first check)
     return { success: false, error: 'Usuário não encontrado. Crie uma conta ou use logins pré-definidos!' };
   };
 
@@ -525,7 +508,7 @@ export function useRouteLogState() {
       } : {})
     } as RouteUser;
 
-    setUsers(prev => [...prev, newUser]);
+    saveCloudUser(newUser);
     setCurrentUser(newUser);
     return newUser;
   };
@@ -535,13 +518,12 @@ export function useRouteLogState() {
     setImpersonatingUser(null);
   };
 
-  const handleImpersonate = (targetUser: RouteUser | null) => {
+  const handleImpersonate = async (targetUser: RouteUser | null) => {
     if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
     
     setImpersonatingUser(targetUser);
 
     if (targetUser) {
-      // Log audit
       const newAudit: AuditLogEntry = {
         id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
         adminId: currentUser.id,
@@ -552,39 +534,61 @@ export function useRouteLogState() {
         details: `Simulando interface do usuário: ${targetUser.name} (${UserRole[targetUser.role]})`,
         timestamp: new Date().toISOString()
       };
-      setAuditLogs(prev => [newAudit, ...prev]);
+      await saveCloudAuditLog(newAudit);
     }
   };
 
   // Moderation Suite
-  const handleModerateUser = (targetUserId: string, action: 'activate' | 'suspend' | 'ban') => {
+  const handleModerateUser = async (targetUserId: string, action: 'activate' | 'suspend' | 'ban') => {
     if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
 
-    setUsers(prev => prev.map(u => {
-      if (u.id === targetUserId) {
-        const nextStatus = action === 'activate' ? 'active' : action === 'suspend' ? 'suspended' : 'banned';
-        
-        // Log audit
-        const newAudit: AuditLogEntry = {
-          id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-          adminId: currentUser.id,
-          adminName: currentUser.name,
-          action: action === 'activate' ? 'Ativar Conta' : action === 'suspend' ? 'Suspender Temporariamente' : 'Banimento Permanente',
-          targetUserId: u.id,
-          targetUserName: u.name,
-          details: `Status alterado de ${u.status} para ${nextStatus}.`,
-          timestamp: new Date().toISOString()
-        };
-        setAuditLogs(prevLogs => [newAudit, ...prevLogs]);
+    const u = users.find(usr => usr.id === targetUserId);
+    if (!u) return;
 
-        return { ...u, status: nextStatus };
-      }
-      return u;
-    }));
+    const nextStatus = action === 'activate' ? 'active' : action === 'suspend' ? 'suspended' : 'banned';
+    const updatedUser = { ...u, status: nextStatus } as RouteUser;
+
+    const newAudit: AuditLogEntry = {
+      id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      adminId: currentUser.id,
+      adminName: currentUser.name,
+      action: action === 'activate' ? 'Ativar Conta' : action === 'suspend' ? 'Suspender Temporariamente' : 'Banimento Permanente',
+      targetUserId: u.id,
+      targetUserName: u.name,
+      details: `Status alterado de ${u.status} para ${nextStatus}.`,
+      timestamp: new Date().toISOString()
+    };
+
+    await saveCloudUser(updatedUser);
+    await saveCloudAuditLog(newAudit);
   };
 
-  // Dispatch custom push notify from Admin or Manager
-  const dispatchCustomPush = (title: string, body: string, selectedRegion: string) => {
+  const handleDeleteUser = async (targetUserId: string) => {
+    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+
+    const userToDelete = users.find(u => u.id === targetUserId);
+    if (!userToDelete) return;
+
+    const newAudit: AuditLogEntry = {
+      id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      adminId: currentUser.id,
+      adminName: currentUser.name,
+      action: 'Excluir Usuário',
+      targetUserId: userToDelete.id,
+      targetUserName: userToDelete.name,
+      details: `Usuário ${userToDelete.name} (${userToDelete.email}) foi excluído definitivamente da base de dados.`,
+      timestamp: new Date().toISOString()
+    };
+
+    await deleteDoc(doc(db, 'users', targetUserId));
+    await saveCloudAuditLog(newAudit);
+
+    if (impersonatingUser && impersonatingUser.id === targetUserId) {
+      setImpersonatingUser(null);
+    }
+  };
+
+  const dispatchCustomPush = async (title: string, body: string, selectedRegion: string) => {
     const sender = activeSessionUser?.name || 'Administrador';
     const newNotif: NotificationLog = {
       id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
@@ -594,7 +598,7 @@ export function useRouteLogState() {
       timestamp: new Date().toISOString(),
       senderName: sender
     };
-    setNotifications(prev => [newNotif, ...prev]);
+    await saveCloudNotification(newNotif);
   };
 
   // Route Actions
@@ -619,150 +623,158 @@ export function useRouteLogState() {
       sentByGerente: routeData.sentByGerente ?? false
     };
 
-    setRotas(prev => [newRoute, ...prev]);
+    saveCloudRoute(newRoute);
     return newRoute;
   };
 
-  const handleUpdateRoute = (id: string, updatedFields: Partial<Rota>) => {
-    setRotas(prev => prev.map(r => r.id === id ? { ...r, ...updatedFields } : r));
-  };
-
-  const handleDeleteRoute = (id: string) => {
-    setRotas(prev => prev.filter(r => r.id !== id));
-  };
-
-  // Optimize Route simulates the Traveling Salesperson algorithm
-  const handleOptimizeRoute = (stopsList: Parada[], originLat: number, originLng: number) => {
-    if (stopsList.length <= 1) return stopsList;
-    
-    // Sort stops based on simple geometric distance from origin (greedy TSP simulation)
-    const sorted: Parada[] = [];
-    const remaining = [...stopsList];
-    let currLat = originLat;
-    let currLng = originLng;
-
-    while (remaining.length > 0) {
-      let nearestIdx = 0;
-      let minDistance = Infinity;
-
-      for (let i = 0; i < remaining.length; i++) {
-        const dLat = remaining[i].lat - currLat;
-        const dLng = remaining[i].lng - currLng;
-        const d = dLat * dLat + dLng * dLng;
-        if (d < minDistance) {
-          minDistance = d;
-          nearestIdx = i;
-        }
-      }
-
-      const nextStop = remaining.splice(nearestIdx, 1)[0];
-      sorted.push(nextStop);
-      currLat = nextStop.lat;
-      currLng = nextStop.lng;
+  const handleUpdateRoute = async (id: string, updatedFields: Partial<Rota>) => {
+    const matched = rotas.find(r => r.id === id);
+    if (matched) {
+      await saveCloudRoute({ ...matched, ...updatedFields });
     }
-
-    return sorted;
   };
 
-  const handleStartRoute = (routeId: string) => {
-    setRotas(prev => prev.map(r => {
-      if (r.id === routeId) {
-        // Broadcast notification
-        setNotifications(prevNotifs => [
-          {
-            id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-            region: r.region,
-            title: `Nova Rota Iniciada - ${r.driverName}`,
-            body: `O motorista ${r.driverName} da placa ${r.driverPlate} às ${new Date().toLocaleTimeString('pt-BR')} iniciou o trajeto: ${r.name}`,
-            timestamp: new Date().toISOString(),
-            senderName: r.driverName
-          },
-          ...prevNotifs
-        ]);
+  const handleDeleteRoute = async (id: string) => {
+    await deleteCloudRoute(id);
+  };
 
-        // Create initial Route Performance Log
-        const initialPerformance: RoutePerformanceLog = {
-          id: `perf_${routeId}`,
-          routeId: r.id,
-          routeName: r.name,
-          driverId: r.driverId,
-          driverName: r.driverName,
-          driverPlate: r.driverPlate,
-          region: r.region,
-          plannedDistanceKm: parseFloat((r.stops.length * 7.5 + 4.2).toFixed(1)),
-          actualDistanceKm: parseFloat((r.stops.length * 7.5 + 4.2).toFixed(1)),
-          plannedStopsCount: r.stops.length,
-          completedStopsCount: 0,
-          startTimestamp: new Date().toISOString(),
-          endTimestamp: null,
-          stopTelemetry: [],
-          routeDeviations: 0,
-          averageTimePerStopMinutes: 0,
-          status: 'active'
-        };
-
-        setPerformanceLogs(prevLogs => [initialPerformance, ...prevLogs]);
-
-        // Push template triggered notification
-        const pushTitle = 'Motorista em Trânsito 🚚';
-        const pushBody = `O motorista ${r.driverName} iniciou a rota "${r.name}" na região ${r.region}. Rastreamento ativo!`;
-
-        setPushLogs(prevPushes => [
-          {
-            id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-            title: pushTitle,
-            body: pushBody,
-            targetRole: UserRole.GERENTE,
-            targetRegion: r.region,
-            sentCount: 1,
-            timestamp: new Date().toISOString(),
-            success: true,
-            type: 'rota_iniciada'
-          },
-          ...prevPushes
-        ]);
-
-        window.dispatchEvent(new CustomEvent('fcm_notification_received', {
-          detail: {
-            title: pushTitle,
-            body: pushBody,
-            type: 'rota_iniciada',
-            region: r.region,
-            role: UserRole.GERENTE
-          }
-        }));
-
-        // Place driver at the origin point initially
-        setLocations(prevLocs => ({
-          ...prevLocs,
-          [r.driverId]: {
-            driverId: r.driverId,
-            lat: r.originLat,
-            lng: r.originLng,
-            heading: 0,
-            speed: 0,
-            lastUpdated: new Date().toISOString()
-          }
-        }));
-
-        setBreadcrumbs(prev => ({
-          ...prev,
-          [r.driverId]: [{ lat: r.originLat, lng: r.originLng }]
-        }));
-
-        return {
-          ...r,
-          status: 'active' as const,
-          currentStopIndex: 0,
-          stops: r.stops.map(s => ({ ...s, status: 'pending' as const }))
-        };
+  const handleOptimizeRoute = async (stopsList: Parada[], originLat: number, originLng: number): Promise<Parada[]> => {
+    if (stopsList.length <= 1) return stopsList;
+    try {
+      const response = await fetch('/api/google/directions-optimize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          stops: stopsList,
+          originLat,
+          originLng
+        })
+      });
+      if (!response.ok) {
+        throw new Error('API optimization failed');
       }
-      return r;
+      const data = await response.json();
+      return data.stops;
+    } catch (err) {
+      console.warn('Backend optimize failed, utilizing local fallback:', err);
+      // Fallback: nearest-neighbor layout
+      const sorted: Parada[] = [];
+      const remaining = [...stopsList];
+      let currLat = originLat;
+      let currLng = originLng;
+
+      while (remaining.length > 0) {
+        let nearestIdx = 0;
+        let minDistance = Infinity;
+
+        for (let i = 0; i < remaining.length; i++) {
+          const dLat = remaining[i].lat - currLat;
+          const dLng = remaining[i].lng - currLng;
+          const d = dLat * dLat + dLng * dLng;
+          if (d < minDistance) {
+            minDistance = d;
+            nearestIdx = i;
+          }
+        }
+
+        const nextStop = remaining.splice(nearestIdx, 1)[0];
+        sorted.push(nextStop);
+        currLat = nextStop.lat;
+        currLng = nextStop.lng;
+      }
+
+      return sorted;
+    }
+  };
+
+  const handleStartRoute = async (routeId: string) => {
+    const r = rotas.find(v => v.id === routeId);
+    if (!r) return;
+
+    const updatedRoute: Rota = {
+      ...r,
+      status: 'active' as const,
+      currentStopIndex: 0,
+      stops: r.stops.map(s => ({ ...s, status: 'pending' as const }))
+    };
+    await saveCloudRoute(updatedRoute);
+
+    const newNotif: NotificationLog = {
+      id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      region: r.region,
+      title: `Nova Rota Iniciada - ${r.driverName}`,
+      body: `O motorista ${r.driverName} da placa ${r.driverPlate} às ${new Date().toLocaleTimeString('pt-BR')} iniciou o trajeto: ${r.name}`,
+      timestamp: new Date().toISOString(),
+      senderName: r.driverName
+    };
+    await saveCloudNotification(newNotif);
+
+    const initialPerformance: RoutePerformanceLog = {
+      id: `perf_${routeId}`,
+      routeId: r.id,
+      routeName: r.name,
+      driverId: r.driverId,
+      driverName: r.driverName,
+      driverPlate: r.driverPlate,
+      region: r.region,
+      plannedDistanceKm: parseFloat((r.stops.length * 7.5 + 4.2).toFixed(1)),
+      actualDistanceKm: parseFloat((r.stops.length * 7.5 + 4.2).toFixed(1)),
+      plannedStopsCount: r.stops.length,
+      completedStopsCount: 0,
+      startTimestamp: new Date().toISOString(),
+      endTimestamp: null,
+      stopTelemetry: [],
+      routeDeviations: 0,
+      averageTimePerStopMinutes: 0,
+      status: 'active'
+    };
+    await saveCloudPerformanceLog(initialPerformance);
+
+    const pushTitle = 'Motorista em Trânsito 🚚';
+    const pushBody = `O motorista ${r.driverName} iniciou a rota "${r.name}" na região ${r.region}. Rastreamento ativo!`;
+
+    const newPush: PushDeliveryLog = {
+      id: `push_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      title: pushTitle,
+      body: pushBody,
+      targetRole: UserRole.GERENTE,
+      targetRegion: r.region,
+      sentCount: 1,
+      timestamp: new Date().toISOString(),
+      success: true,
+      type: 'rota_iniciada'
+    };
+    await saveCloudPushLog(newPush);
+
+    window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+      detail: {
+        title: pushTitle,
+        body: pushBody,
+        type: 'rota_iniciada',
+        region: r.region,
+        role: UserRole.GERENTE
+      }
+    }));
+
+    const nextLoc: GPSLocation = {
+      driverId: r.driverId,
+      lat: r.originLat,
+      lng: r.originLng,
+      heading: 0,
+      speed: 0,
+      lastUpdated: new Date().toISOString()
+    };
+    await saveCloudGPSLocation(nextLoc);
+
+    setBreadcrumbs(prev => ({
+      ...prev,
+      [r.driverId]: [{ lat: r.originLat, lng: r.originLng }]
     }));
   };
 
-  // Chat actions
-  const handlePostMessage = (text: string, audioUrl?: string) => {
+  const handlePostMessage = async (text: string, audioUrl?: string) => {
     if (!activeSessionUser) return;
     const userRegion = (activeSessionUser as any).region || 'MG';
 
@@ -777,18 +789,27 @@ export function useRouteLogState() {
       timestamp: new Date().toISOString()
     };
 
-    setChats(prev => [...prev, newMessage]);
+    await saveCloudChat(newMessage);
+
+    window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+      detail: {
+        title: `Novo Chat de ${activeSessionUser.name} (${userRegion}) 💬`,
+        body: text,
+        type: 'urgente_chat',
+        region: userRegion,
+        role: 'all',
+        senderId: activeSessionUser.id
+      }
+    }));
   };
 
-  // Send simulated segmented push notification reproducing FCM targeting
   const sendSegmentedPush = (
     templateType: 'nova_rota' | 'rota_iniciada' | 'status_parada' | 'urgente_chat' | 'custom',
     profileSegment: 'all' | UserRole,
-    regionSegment: string, // 'all' or specific region code
+    regionSegment: string,
     customTitle?: string,
     customBody?: string
   ) => {
-    // Resolve matching users count in our active user list to simulate real FCM subscriber delivery
     const matchingUsers = users.filter(usr => {
       const roleMatch = profileSegment === 'all' || usr.role === profileSegment;
       const regionMatch = regionSegment === 'all' || (usr as any).region === regionSegment;
@@ -819,10 +840,8 @@ export function useRouteLogState() {
       success: true,
       type: templateType
     };
+    saveCloudPushLog(newPush);
 
-    setPushLogs(prev => [newPush, ...prev]);
-
-    // Track in notification logs too to let standard notifications catch it
     const newNotif: NotificationLog = {
       id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
       region: regionSegment === 'all' ? 'GV1' : regionSegment,
@@ -831,31 +850,24 @@ export function useRouteLogState() {
       timestamp: new Date().toISOString(),
       senderName: activeSessionUser?.name || 'Controle central'
     };
-    setNotifications(prev => [newNotif, ...prev]);
+    saveCloudNotification(newNotif);
 
-    // Dispatch a browser-level custom event so the floating notification toaster highlights it live
     window.dispatchEvent(new CustomEvent('fcm_notification_received', {
       detail: {
         title: titleStr,
         body: bodyStr,
         type: templateType,
         region: regionSegment,
-        role: profileSegment
+        role: profileSegment,
+        senderId: activeSessionUser?.id || 'central'
       }
     }));
 
     return newPush;
   };
 
-  const resetAllData = () => {
-    setUsers(INITIAL_USERS);
-    setRotas(INITIAL_ROTAS);
-    setLocations(INITIAL_LOCATIONS);
-    setChats(INITIAL_CHAT);
-    setNotifications(INITIAL_NOTIFICATIONS);
-    setAuditLogs(INITIAL_AUDIT_LOGS);
-    setPerformanceLogs(INITIAL_PERFORMANCE_LOGS);
-    setPushLogs(INITIAL_PUSH_LOGS);
+  const resetAllData = async () => {
+    await resetCloudDatabaseAll();
     setPushConfig({
       fcmToken: 'fcm_token_rl_' + Math.random().toString(36).substring(2, 10),
       fcmServerKey: 'key_fcm_route_log_prod_08e2f89caef3893a',
@@ -890,6 +902,7 @@ export function useRouteLogState() {
     handleLogout,
     handleImpersonate,
     handleModerateUser,
+    handleDeleteUser,
     dispatchCustomPush,
     handleCreateRoute,
     handleUpdateRoute,

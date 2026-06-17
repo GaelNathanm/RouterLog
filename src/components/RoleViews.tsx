@@ -15,8 +15,11 @@ import {
 import InteractiveMap from './InteractiveMap';
 import RegionalMap from './RegionalMap';
 import RouteMap from './RouteMap';
+import ClientImporter from './ClientImporter';
+import WelcomeTutorial from './WelcomeTutorial';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import { saveCloudGPSLocation } from '../firebase';
 
 // ==========================================
 // CENTRALIZED EXPORT HELPERS (CSV & PDF)
@@ -631,6 +634,7 @@ interface AdminProps {
   pushConfig?: PushConfig;
   onImpersonate: (user: RouteUser | null) => void;
   onModerate: (userId: string, action: 'activate' | 'suspend' | 'ban') => void;
+  onDeleteUser: (userId: string) => void;
   onPush: (title: string, body: string, region: string) => void;
   onSendPush?: (
     templateType: 'nova_rota' | 'rota_iniciada' | 'status_parada' | 'urgente_chat' | 'custom',
@@ -651,14 +655,20 @@ export function AdminDashboard({
   notifications, 
   performanceLogs, 
   onImpersonate, 
-  onModerate, 
-  onPush 
+  onModerate,
+  onDeleteUser,
+  onPush,
+  onSendPush
 }: AdminProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'users' | 'analytics' | 'chats' | 'audits' | 'desempenho' | 'mapa'>('users');
+  const [showTutorial, setShowTutorial] = useState(false);
   const [pushTitle, setPushTitle] = useState('');
   const [pushBody, setPushBody] = useState('');
   const [pushRegion, setPushRegion] = useState('GV1');
+  const [pushRoleTarget, setPushRoleTarget] = useState<'all' | UserRole>('all');
+  const [pushRegionTarget, setPushRegionTarget] = useState<string>('all');
+  const [userToDeleteId, setUserToDeleteId] = useState<string | null>(null);
 
   const filteredUsers = users.filter(u => 
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -671,10 +681,15 @@ export function AdminDashboard({
   const handleSendPush = (e: React.FormEvent) => {
     e.preventDefault();
     if (!pushTitle || !pushBody) return;
-    onPush(pushTitle, pushBody, pushRegion);
+    
+    if (onSendPush) {
+      onSendPush('custom', pushRoleTarget, pushRegionTarget, pushTitle, pushBody);
+    } else {
+      onPush(pushTitle, pushBody, pushRegionTarget);
+    }
+
     setPushTitle('');
     setPushBody('');
-    alert('Notificação Push disparada instantaneamente via FCM Server!');
   };
 
   return (
@@ -692,6 +707,15 @@ export function AdminDashboard({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setShowTutorial(true)}
+            className="bg-slate-800 hover:bg-slate-705 text-amber-400 hover:text-amber-300 border border-slate-700 px-3 py-2 text-xs rounded-lg flex items-center gap-1.5 font-bold cursor-pointer transition-all"
+            title="Abrir guia interativo explicativo"
+          >
+            <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Guia do Usuário</span>
+          </button>
           <input
             type="text"
             placeholder="Pesquisa Universal..."
@@ -799,8 +823,16 @@ export function AdminDashboard({
           </div>
 
           <div className="divide-y divide-slate-100">
-            {filteredUsers.map(user => (
-              <div key={user.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors">
+            <AnimatePresence initial={false}>
+              {filteredUsers.map((user, idx) => (
+                <motion.div
+                  key={user.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.2, delay: Math.min(idx * 0.02, 0.4) }}
+                  className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors"
+                >
                 <div className="space-y-1 text-xs">
                   <div className="flex items-center gap-2">
                     <strong className="text-sm font-bold text-slate-800">{user.name}</strong>
@@ -844,7 +876,7 @@ export function AdminDashboard({
                       {user.status !== 'active' && (
                         <button
                           onClick={() => onModerate(user.id, 'activate')}
-                          className="p-1 px-2 text-[10px] font-bold border border-emerald-200 text-emerald-700 bg-emerald-50 rounded hover:bg-emerald-100"
+                          className="p-1 px-2 text-[10px] font-bold border border-emerald-200 text-emerald-700 bg-emerald-50 rounded hover:bg-emerald-100 cursor-pointer"
                         >
                           Ativar
                         </button>
@@ -855,24 +887,55 @@ export function AdminDashboard({
                           <button
                             onClick={() => onModerate(user.id, 'suspend')}
                             title="Suspender Temporariamente para Averiguação Logística"
-                            className="p-1.5 border border-yellow-200 text-yellow-700 bg-yellow-50 rounded hover:bg-yellow-105"
+                            className="p-1.5 border border-yellow-200 text-yellow-700 bg-yellow-50 rounded hover:bg-yellow-100 cursor-pointer"
                           >
                             <AlertCircle className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => onModerate(user.id, 'ban')}
                             title="Banimento Permanente (Adicionar na Blacklist)"
-                            className="p-1.5 border border-rose-200 text-rose-700 bg-rose-50 rounded hover:bg-rose-105"
+                            className="p-1.5 border border-rose-200 text-rose-700 bg-rose-50 rounded hover:bg-rose-105 cursor-pointer"
                           >
                             <Ban className="w-3.5 h-3.5" />
                           </button>
                         </>
                       )}
+
+                      {/* Excluir Usuário definitely with inline confirmation */}
+                      {userToDeleteId === user.id ? (
+                        <div className="flex items-center gap-1 bg-red-50 border border-red-200 p-0.5 px-1.5 rounded animate-pulse">
+                          <span className="text-[10px] text-red-700 font-bold">Excluir?</span>
+                          <button
+                            onClick={() => {
+                              onDeleteUser(user.id);
+                              setUserToDeleteId(null);
+                            }}
+                            className="text-[9px] bg-red-600 hover:bg-red-705 text-white font-bold p-0.5 px-1.5 rounded cursor-pointer leading-tight"
+                          >
+                            Sim
+                          </button>
+                          <button
+                            onClick={() => setUserToDeleteId(null)}
+                            className="text-[9px] bg-slate-200 hover:bg-slate-350 text-slate-700 p-0.5 px-1.5 rounded cursor-pointer leading-tight"
+                          >
+                            Não
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setUserToDeleteId(user.id)}
+                          title="Excluir Usuário Definitivamente"
+                          className="p-1.5 border border-red-200 text-red-600 bg-red-50 hover:bg-red-105 hover:text-red-700 rounded transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
-              </div>
+              </motion.div>
             ))}
+            </AnimatePresence>
           </div>
         </div>
       )}
@@ -977,17 +1040,36 @@ export function AdminDashboard({
                 required
               />
             </div>
-            <div>
-              <label className="block text-slate-500 mb-1">Direcionar para Região Específica</label>
-              <select
-                value={pushRegion}
-                onChange={e => setPushRegion(e.target.value)}
-                className="w-full border border-slate-200 p-2 rounded-lg bg-white"
-              >
-                {['GV1', 'GV2', 'GV3', 'ES/MG', 'Norte', 'Sul', '262'].map(r => (
-                  <option key={r} value={r}>Apenas Operadores de {r}</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-slate-500 mb-1">Público-Alvo (Perfil)</label>
+                <select
+                  value={pushRoleTarget}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setPushRoleTarget(val === 'all' ? 'all' : Number(val) as UserRole);
+                  }}
+                  className="w-full border border-slate-200 p-2 rounded-lg bg-white"
+                >
+                  <option value="all">Todos os Perfis (FCM All Broadcast)</option>
+                  <option value={UserRole.MOTORISTA}>Apenas Motoristas (Condutores)</option>
+                  <option value={UserRole.GERENTE}>Apenas Gerentes de Logística</option>
+                  <option value={UserRole.VENDEDOR}>Apenas Vendedores (Comercial)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-slate-500 mb-1">Direcionar para Região</label>
+                <select
+                  value={pushRegionTarget}
+                  onChange={e => setPushRegionTarget(e.target.value)}
+                  className="w-full border border-slate-200 p-2 rounded-lg bg-white"
+                >
+                  <option value="all">Todas as Regiões (Global)</option>
+                  {['GV1', 'GV2', 'GV3', 'ES/MG', 'Norte', 'Sul', '262'].map(r => (
+                    <option key={r} value={r}>Apenas Operadores de {r}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <button
@@ -1242,6 +1324,13 @@ export function AdminDashboard({
         </div>
       )}
 
+      {/* Welcome Tutorial Overlay */}
+      <WelcomeTutorial 
+        role={UserRole.ADMIN} 
+        forceOpen={showTutorial} 
+        onClose={() => setShowTutorial(false)} 
+      />
+
     </div>
   );
 }
@@ -1272,7 +1361,7 @@ interface GerenteProps {
   onCreateRoute: (data: Partial<Rota>) => Rota | undefined;
   onUpdateRoute: (id: string, data: Partial<Rota>) => void;
   onDeleteRoute: (id: string) => void;
-  onOptimize: (stops: Parada[], oLat: number, oLng: number) => Parada[];
+  onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
   onStartRoute: (id: string) => void;
 }
 
@@ -1299,6 +1388,12 @@ export function GerenteDashboard({
   const [chatInput, setChatInput] = useState('');
   const [activeTab, setActiveTab] = useState<'map' | 'routes' | 'chat' | 'push_config' | 'analytics' | 'clientes'>('map');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
+  
+  // Tutorial and Dynamic Route Filters States
+  const [showTutorial, setShowTutorial] = useState(false);
+  const [filterRouteStatus, setFilterRouteStatus] = useState<string>('all');
+  const [filterRouteDriver, setFilterRouteDriver] = useState<string>('all');
+  const [filterRouteDate, setFilterRouteDate] = useState<string>('all'); // all, today, week, month
   
   // Custom Push Form states
   const [pushTemplate, setPushTemplate] = useState<'nova_rota' | 'rota_iniciada' | 'status_parada' | 'urgente_chat' | 'custom'>('nova_rota');
@@ -1436,6 +1531,42 @@ export function GerenteDashboard({
   const regionalRoutes = rotas.filter(r => r.region === region);
   const activeRoute = regionalRoutes.find(r => r.status === 'active') || null;
 
+  // Filter regional routes dynamically by delivery status, assigned driver, and creation date
+  const filteredRegionalRoutes = useMemo(() => {
+    let list = [...regionalRoutes];
+    
+    if (filterRouteStatus !== 'all') {
+      list = list.filter(r => r.status === filterRouteStatus);
+    }
+    
+    if (filterRouteDriver !== 'all') {
+      list = list.filter(r => r.driverId === filterRouteDriver);
+    }
+    
+    if (filterRouteDate !== 'all') {
+      const now = new Date();
+      list = list.filter(r => {
+        if (!r.createdAt) return false;
+        const createdDate = new Date(r.createdAt);
+        // Date difference calculation
+        const createdStartOfDay = new Date(createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate()).getTime();
+        const nowStartOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const diffDays = Math.round((nowStartOfDay - createdStartOfDay) / (1000 * 60 * 60 * 24));
+        
+        if (filterRouteDate === 'today') {
+          return createdDate.toDateString() === now.toDateString();
+        } else if (filterRouteDate === 'week') {
+          return diffDays <= 7;
+        } else if (filterRouteDate === 'month') {
+          return diffDays <= 30;
+        }
+        return true;
+      });
+    }
+    
+    return list;
+  }, [regionalRoutes, filterRouteStatus, filterRouteDriver, filterRouteDate]);
+
   // Region isolation of drivers (displaying only those linked to the logged-in Manager's region)
   const regionalDrivers = useMemo(() => {
     return users.filter(u => u.role === UserRole.MOTORISTA && (u as any).region === region);
@@ -1550,9 +1681,21 @@ export function GerenteDashboard({
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 text-emerald-700 text-[11px] font-medium font-mono self-start md:self-center">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            FCM Channel Live: {region}-Secured
+          <div className="flex items-center gap-2 self-start md:self-center">
+            <button
+              type="button"
+              onClick={() => setShowTutorial(true)}
+              className="bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-slate-700 px-3 py-1.5 text-xs rounded-xl flex items-center gap-1 font-bold cursor-pointer transition-all"
+              title="Abrir guia interativo explicativo regional"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>Guia Regional</span>
+            </button>
+
+            <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 text-emerald-700 text-[11px] font-medium font-mono">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              FCM Channel Live: {region}-Secured
+            </div>
           </div>
         </div>
 
@@ -1709,12 +1852,82 @@ export function GerenteDashboard({
               ) : activeTab === 'routes' ? (
                 // Active driver and route list layout with full regional detail
                 <div className="space-y-4">
+                  {/* Dynamic Fleet Filter bar widget */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-xs">
+                    <div className="flex items-center justify-between border-b border-slate-150 pb-2">
+                      <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-700 uppercase tracking-tight font-sans">
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <span>Filtros Operacionais</span>
+                      </div>
+                      {(filterRouteStatus !== 'all' || filterRouteDriver !== 'all' || filterRouteDate !== 'all') && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFilterRouteStatus('all');
+                            setFilterRouteDriver('all');
+                            setFilterRouteDate('all');
+                          }}
+                          className="text-[10px] text-blue-600 hover:text-blue-800 font-bold transition-all cursor-pointer underline"
+                        >
+                          Limpar
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-2.5">
+                      {/* Status select */}
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1 font-mono">Status de Entrega</label>
+                        <select
+                          value={filterRouteStatus}
+                          onChange={(e) => setFilterRouteStatus(e.target.value)}
+                          className="w-full bg-white border border-slate-205 text-slate-700 px-2 py-1.5 text-[11px] rounded-xl focus:border-blue-500 outline-none font-semibold transition-all cursor-pointer"
+                        >
+                          <option value="all">Todos os Status</option>
+                          <option value="draft">Rascunho (Draft)</option>
+                          <option value="active">Em Trânsito (Active)</option>
+                          <option value="completed">Concluídos (Completed)</option>
+                        </select>
+                      </div>
+
+                      {/* Driver select */}
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1 font-mono">Motorista Designado</label>
+                        <select
+                          value={filterRouteDriver}
+                          onChange={(e) => setFilterRouteDriver(e.target.value)}
+                          className="w-full bg-white border border-slate-205 text-slate-700 px-2 py-1.5 text-[11px] rounded-xl focus:border-blue-500 outline-none font-semibold text-ellipsis overflow-hidden transition-all cursor-pointer"
+                        >
+                          <option value="all">Todos os Motoristas</option>
+                          {regionalDrivers.map(drv => (
+                            <option key={drv.id} value={drv.id}>{drv.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Date select */}
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-400 uppercase block mb-1 font-mono">Data de Criação</label>
+                        <select
+                          value={filterRouteDate}
+                          onChange={(e) => setFilterRouteDate(e.target.value)}
+                          className="w-full bg-white border border-slate-200 text-slate-700 px-2 py-1.5 text-[11px] rounded-xl focus:border-blue-500 outline-none font-semibold transition-all cursor-pointer"
+                        >
+                          <option value="all">Qualquer Período</option>
+                          <option value="today">Criadas Hoje</option>
+                          <option value="week">Últimos 7 dias</option>
+                          <option value="month">Últimos 30 dias</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
                   <div>
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2 font-mono">
-                      Rotas Regionais Mapeadas ({regionalRoutes.length})
+                      Rotas Regionais Mapeadas ({filteredRegionalRoutes.length})
                     </span>
                     <div className="space-y-2.5">
-                      {regionalRoutes.map(route => {
+                      {filteredRegionalRoutes.map(route => {
                         const completedStops = route.stops.filter(s => s.status === 'completed').length;
                         const isCompleted = route.status === 'completed';
                         const isActive = route.status === 'active';
@@ -1734,6 +1947,9 @@ export function GerenteDashboard({
                             <div className="space-y-0.5 text-[11px] text-slate-500 font-sans">
                               <p>Condutor: <strong className="text-slate-700">{route.driverName}</strong></p>
                               <p>Identificação: <strong className="text-slate-700 font-mono text-[10px] uppercase">{route.driverPlate}</strong></p>
+                              {route.createdAt && (
+                                <p className="text-[9px] text-slate-400 mt-1">Criação: <strong className="text-slate-500 font-mono">{new Date(route.createdAt).toLocaleDateString('pt-BR')}</strong></p>
+                              )}
                             </div>
                             
                             <div className="mt-2.5 flex items-center justify-between text-[11px] border-t border-slate-200/50 pt-2 font-sans text-slate-500">
@@ -1743,8 +1959,8 @@ export function GerenteDashboard({
                           </div>
                         );
                       })}
-                      {regionalRoutes.length === 0 && (
-                        <div className="text-center py-6 text-slate-400 text-xs italic">Nenhuma rota ativa regional.</div>
+                      {filteredRegionalRoutes.length === 0 && (
+                        <div className="text-center py-6 text-slate-400 text-xs italic">Nenhuma rota ativa regional com estes filtros.</div>
                       )}
                     </div>
                   </div>
@@ -2160,8 +2376,8 @@ export function GerenteDashboard({
             </div>
           ) : activeTab === 'clientes' ? (
             // Tab 6: Clientes route planner design
-            <div className="bg-white border border-slate-205 rounded-2xl p-5 shadow-md flex flex-col flex-grow space-y-6 font-sans">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <div className="bg-white border border-slate-205 rounded-2xl p-6 shadow-md flex flex-col flex-grow space-y-6 font-sans">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3.5">
                 <div>
                   <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-2 font-sans">
                     <Users className="w-4.5 h-4.5 text-indigo-700 shrink-0" />
@@ -2170,138 +2386,157 @@ export function GerenteDashboard({
                   <p className="text-[11px] text-slate-400 mt-0.5">Criação de itinerários, otimização automática de paradas e alocação de frota regional em tempo real.</p>
                 </div>
                 
-                <span className="text-[9px] font-mono text-[indigo-700] bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100 font-bold uppercase shrink-0">
+                <span className="text-[9px] font-mono text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100 font-bold uppercase shrink-0">
                   {region}-DESPATCH
                 </span>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start font-sans">
                 {/* Section A: Creator/Editor card form (xl:col-span-5) */}
-                <div className="xl:col-span-5 bg-slate-50 border border-slate-200 p-4 rounded-2xl shadow-sm space-y-4 text-xs font-sans">
-                  <div className="flex justify-between items-center border-b pb-2">
-                    <span className="font-extrabold text-slate-700 text-xs uppercase tracking-wide">
-                      {gEditingRouteId ? '📝 Editar Itinerário Atribuído' : '📦 Elaborar Nova Rota para Despacho'}
-                    </span>
-                    {gEditingRouteId && (
-                      <button 
-                        onClick={() => {
-                          setGEditingRouteId(null);
-                          setGRouteName('Rota Corporativa ' + new Date().toLocaleDateString('pt-BR'));
-                          setGOrigin('CD Central ' + region + ' - BR-116, Km 410');
-                          setGSelectedDriverId('');
-                          setGStops([]);
-                        }}
-                        className="text-slate-500 hover:text-rose-600 font-bold text-[10px]"
-                      >
-                        Descartar Edição
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="space-y-3.5">
-                    <div>
-                      <label className="block text-slate-400 font-semibold mb-1 uppercase text-[9px]">Nome Identificador da Rota</label>
-                      <input 
-                        type="text" 
-                        value={gRouteName}
-                        onChange={e => setGRouteName(e.target.value)}
-                        className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-800 text-xs font-sans font-medium"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 font-semibold mb-1 uppercase text-[9px]">Ponto de Partida / Origem</label>
-                      <input 
-                        type="text" 
-                        value={gOrigin}
-                        onChange={e => {
-                          setGOrigin(e.target.value);
-                          gGeocodeAddress(e.target.value, true);
-                        }}
-                        onBlur={e => gGeocodeAddress(e.target.value, true)}
-                        className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-800 text-xs font-sans font-medium"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-slate-400 font-semibold mb-1 uppercase text-[9px]">Selecionar Motorista Escalado</label>
-                      <select
-                        value={gSelectedDriverId}
-                        onChange={e => setGSelectedDriverId(e.target.value)}
-                        className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-800 text-xs font-sans font-semibold"
-                      >
-                        <option value="">Selecione um Condutor Regional...</option>
-                        {regionalDrivers.map(drv => (
-                          <option key={drv.id} value={drv.id}>
-                            {drv.name} ({(drv as any).plate || 'Sem Placa'})
-                          </option>
-                        ))}
-                      </select>
-                      {regionalDrivers.length === 0 && (
-                        <span className="text-[10px] text-amber-600 block mt-1 font-bold">⚠️ Nenhum motorista registrado na região {region}.</span>
+                <div className="xl:col-span-5 space-y-5">
+                  
+                  {/* Card A1: Basic Route Settings */}
+                  <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl shadow-sm space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-205 pb-2">
+                      <span className="font-extrabold text-slate-800 text-xs uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                        <span className="w-4.5 h-4.5 rounded bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-black">1</span>
+                        {gEditingRouteId ? '📝 Editar Cabeçalho' : '📦 Informações da Rota'}
+                      </span>
+                      {gEditingRouteId && (
+                        <button 
+                          onClick={() => {
+                            setGEditingRouteId(null);
+                            setGRouteName('Rota Corporativa ' + new Date().toLocaleDateString('pt-BR'));
+                            setGOrigin('CD Central ' + region + ' - BR-116, Km 410');
+                            setGSelectedDriverId('');
+                            setGStops([]);
+                          }}
+                          className="text-rose-600 hover:text-rose-800 hover:underline font-bold text-[10px] transition-colors"
+                        >
+                          Cancelar Edição
+                        </button>
                       )}
                     </div>
 
-                    {/* Planned Stops Builder Block */}
-                    <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2.5">
-                      <span className="font-extrabold text-[#111] block text-[10px] uppercase tracking-wider">Pontos de Carga & Clientes</span>
-                      
-                      {/* Presets load helper */}
-                      <div className="space-y-1 bg-slate-50 p-2.5 rounded-lg border">
-                        <span className="text-[9px] text-slate-400 font-bold block uppercase">Presets de entrega rápidos:</span>
-                        <div className="flex flex-wrap gap-1">
-                          {GUARIBA_LOCATIONS.map((loc, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => gAddPresetStop(idx)}
-                              className="bg-white hover:bg-indigo-50 text-indigo-700 font-extrabold text-[10px] px-2 py-1 rounded border shadow-sm transition-all cursor-pointer"
-                            >
-                              {loc.name.split(' ')[0]}
-                            </button>
+                    <div className="space-y-3 px-0.5">
+                      <div>
+                        <label className="block text-slate-450 font-semibold mb-1 uppercase text-[8px] tracking-wider">Identificação da Rota</label>
+                        <input 
+                          type="text" 
+                          value={gRouteName}
+                          onChange={e => setGRouteName(e.target.value)}
+                          placeholder="EX: Rota Expressa Centro"
+                          className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-805 text-xs font-medium shadow-sm transition-all"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-450 font-semibold mb-1 uppercase text-[8px] tracking-wider">Origem / Centro de Distribuição</label>
+                        <input 
+                          type="text" 
+                          value={gOrigin}
+                          onChange={e => {
+                            setGOrigin(e.target.value);
+                            gGeocodeAddress(e.target.value, true);
+                          }}
+                          onBlur={e => gGeocodeAddress(e.target.value, true)}
+                          className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-805 text-xs font-medium shadow-sm transition-all"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-450 font-semibold mb-1 uppercase text-[8px] tracking-wider font-sans">Condutor Regional Designado</label>
+                        <select
+                          value={gSelectedDriverId}
+                          onChange={e => setGSelectedDriverId(e.target.value)}
+                          className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-805 text-xs font-semibold shadow-sm cursor-pointer transition-all"
+                        >
+                          <option value="">Selecione um motorista escalado...</option>
+                          {regionalDrivers.map(drv => (
+                            <option key={drv.id} value={drv.id}>
+                              👤 {drv.name} ({(drv as any).plate || 'Sem Placa'})
+                            </option>
                           ))}
+                        </select>
+                        {regionalDrivers.length === 0 && (
+                          <span className="text-[10px] text-amber-600 block mt-1 font-bold bg-amber-50 p-2.5 border border-amber-200 rounded-lg animate-pulse">
+                            ⚠️ Nenhum motorista disponível na região {region}.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Card A2: Stops Builder & List */}
+                  <div className="bg-slate-50 border border-slate-200 p-5 rounded-2xl shadow-sm space-y-4">
+                    <div className="flex items-center gap-1.5 border-b border-slate-205 pb-2">
+                      <span className="w-4.5 h-4.5 rounded bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-black">2</span>
+                      <span className="font-extrabold text-slate-805 text-xs uppercase tracking-wider font-mono">
+                        Clientes & Itinerário
+                      </span>
+                    </div>
+
+                    {/* Presets load helper */}
+                    <div className="space-y-1.5 bg-indigo-50/50 p-3 rounded-xl border border-indigo-100">
+                      <span className="text-[9px] text-indigo-800 font-bold block uppercase tracking-wider">📦 Endereços de Clientes Recorrentes:</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {GUARIBA_LOCATIONS.map((loc, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => gAddPresetStop(idx)}
+                            className="bg-white hover:bg-indigo-650 hover:text-white text-indigo-700 font-bold text-[10px] px-2.5 py-1 rounded-lg border border-indigo-200/50 shadow-sm transition-all cursor-pointer flex items-center gap-1"
+                          >
+                            <span>📍</span> {loc.name.split(' ')[0]}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-slate-455 font-bold uppercase text-[8px] tracking-wider mb-1">Dados Complementares do Cliente</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="Nome do Cliente"
+                            value={gClientName}
+                            onChange={e => setGClientName(e.target.value)}
+                            className="border border-slate-200 rounded-xl p-2.5 text-xs font-semibold focus:ring-2 focus:ring-indigo-550 focus:outline-none bg-white text-slate-850"
+                          />
+                          <input 
+                            type="tel" 
+                            placeholder="WhatsApp (ex: 55319...)"
+                            value={gClientWhatsApp}
+                            onChange={e => setGClientWhatsApp(e.target.value)}
+                            className="border border-slate-200 rounded-xl p-2.5 text-xs font-semibold focus:ring-2 focus:ring-indigo-550 focus:outline-none bg-white text-slate-850"
+                          />
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="Nome do Cliente"
-                          value={gClientName}
-                          onChange={e => setGClientName(e.target.value)}
-                          className="border border-slate-200 rounded-lg p-2 text-xs font-medium focus:ring-1 focus:ring-indigo-500"
-                        />
-                        <input 
-                          type="tel" 
-                          placeholder="WhatsApp (ex: 5533...)"
-                          value={gClientWhatsApp}
-                          onChange={e => setGClientWhatsApp(e.target.value)}
-                          className="border border-slate-200 rounded-lg p-2 text-xs font-medium focus:ring-1 focus:ring-indigo-500"
-                        />
-                      </div>
-
                       <div className="relative font-sans">
+                        <label className="block text-slate-455 font-bold uppercase text-[8px] tracking-wider mb-1">Endereço de Entrega</label>
                         <input 
                           type="text" 
-                          placeholder="Endereço Comercial Completo"
+                          placeholder="Digite o endereço completo do cliente"
                           value={gClientAddress}
                           onChange={e => {
                             setGClientAddress(e.target.value);
                             setGIsValidated(false);
                             gFetchAddressPredictions(e.target.value);
                           }}
-                          className="w-full border border-slate-200 rounded-lg p-2 text-xs font-medium focus:ring-1 focus:ring-indigo-500"
+                          className="w-full border border-slate-200 rounded-xl p-2.5 text-xs font-medium focus:ring-2 focus:ring-indigo-550 focus:outline-none bg-white text-slate-850"
                         />
                         {gAddressPredictions.length > 0 && (
-                          <div className="absolute z-10 w-full bg-white border rounded-xl shadow-lg mt-1 max-h-36 overflow-y-auto leading-tight font-sans">
+                          <div className="absolute z-10 w-full bg-white border border-slate-200 rounded-xl shadow-xl mt-1 max-h-36 overflow-y-auto leading-tight font-sans">
                             {gAddressPredictions.map((pred, pIdx) => (
                               <button
                                 key={pIdx}
                                 type="button"
                                 onClick={() => gHandleSelectPrediction(pred.description, pred.placeId)}
-                                className="w-full text-left p-2 hover:bg-slate-50 border-b text-[11px] font-sans truncate"
+                                className="w-full text-left p-2.5 hover:bg-slate-50 border-b border-slate-100 text-[11px] font-sans truncate font-medium text-slate-705"
                               >
-                                {pred.description}
+                                🗺️ {pred.description}
                               </button>
                             ))}
                           </div>
@@ -2311,38 +2546,64 @@ export function GerenteDashboard({
                       <button
                         type="button"
                         onClick={gHandleAddStop}
-                        className="w-full py-1.5 bg-slate-100 hover:bg-slate-200/80 border text-slate-700 font-black rounded-lg text-center cursor-pointer transition-all active:scale-95 text-[10px]"
+                        className="w-full py-2 bg-white hover:bg-slate-200 border border-slate-300 text-slate-700 font-extrabold rounded-xl text-center cursor-pointer transition-all active:scale-[0.98] text-[11px] shadow-sm flex items-center justify-center gap-1"
                       >
-                        Incluir Cliente na Lista
+                        ➕ Incluir Cliente na Rota
                       </button>
                     </div>
 
-                    {/* Stops List Planned */}
-                    <div className="space-y-1.5">
-                      <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">Itinerário Planejado ({gStops.length} Clientes)</span>
-                      <div className="space-y-1 bg-white p-2.5 rounded-xl border max-h-[140px] overflow-y-auto">
-                        {gStops.map((st, idx) => (
-                          <div key={st.id} className="flex items-center justify-between text-[11px] border-b pb-1 mb-1 last:border-b-0">
-                            <span className="truncate max-w-[170px] text-slate-700 font-medium font-sans">
-                              #{idx + 1} <strong className="text-indigo-950 font-extrabold">{st.clientName}</strong> - {st.address}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => setGStops(prev => prev.filter(item => item.id !== st.id))}
-                              className="text-rose-600 hover:bg-rose-50 p-1 rounded cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                    {/* Stops List Planned styled as a logistics vertical sequence */}
+                    <div className="space-y-2 pt-2 border-t border-slate-200/80">
+                      <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">Sequência Planilhada de Paradas ({gStops.length})</span>
+                      
+                      <div className="space-y-2 bg-white p-3 rounded-xl border border-slate-200 max-h-[220px] overflow-y-auto">
+                        {gStops.length > 0 && (
+                          <div className="relative pl-4 space-y-3.5">
+                            {/* Vertical dashed line */}
+                            <div className="absolute left-[7px] top-[14px] bottom-[14px] w-0.5 bg-dashed border-l border-indigo-200"></div>
+
+                            {gStops.map((st, idx) => (
+                              <div key={st.id} className="relative flex items-start justify-between gap-2.5 text-[11.5px]">
+                                {/* Timeline badge */}
+                                <div className="absolute left-[-17px] top-0.5 w-3.5 h-3.5 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[8px] font-bold z-10 border border-indigo-200 animate-[pulse_2s_infinite]">
+                                  {idx + 1}
+                                </div>
+
+                                <div className="min-w-0 pr-1 flex-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <strong className="text-slate-850 font-bold truncate block text-xs">{st.clientName}</strong>
+                                    {st.phone && (
+                                      <span className="text-[9px] font-mono text-indigo-705 bg-indigo-50 border border-indigo-100/50 px-1 rounded font-bold uppercase scale-90">
+                                        WhatsApp
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-slate-450 truncate font-mono mt-0.5">{st.address}</p>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => setGStops(prev => prev.filter(item => item.id !== st.id))}
+                                  title="Remover ponto de carga"
+                                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-all cursor-pointer shrink-0 active:scale-90"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                         {gStops.length === 0 && (
-                          <p className="text-center py-4 text-slate-400 font-medium">Nenhum ponto de parada inserido.</p>
+                          <div className="text-center py-6 text-slate-400 font-medium">
+                            <p className="text-[11px]">Nenhum ponto planilhado para esta viagem.</p>
+                            <p className="text-[9px] text-slate-400 mt-0.5 uppercase tracking-wide">Selecione presets acima para carregamento imediato</p>
+                          </div>
                         )}
                       </div>
                     </div>
 
                     {/* Compile & Despatch Route Buttons */}
-                    <div className="flex gap-2 pt-2 border-t">
+                    <div className="flex gap-2 pt-2 border-t border-slate-200/60">
                       <button
                         type="button"
                         onClick={() => {
@@ -2403,21 +2664,25 @@ export function GerenteDashboard({
                           setGSelectedDriverId('');
                           setGStops([]);
                         }}
-                        className="flex-1 py-3 bg-gradient-to-r from-[#10b981] to-[#047857] hover:from-emerald-600 hover:to-emerald-800 text-white rounded-xl font-bold transition-all shadow-md cursor-pointer text-xs uppercase"
+                        className="flex-1 py-3 bg-gradient-to-r from-[#10b981] to-[#047857] hover:from-emerald-600 hover:to-emerald-805 text-white rounded-xl font-bold transition-all shadow-md cursor-pointer text-xs uppercase"
                       >
                         {gEditingRouteId ? 'Salvar Edição 📝' : 'Despachar Rota 📦'}
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           if (gStops.length <= 1) {
                             alert('Por favor insira ao menos duas paradas para rodar o otimizador.');
                             return;
                           }
-                          const sortedStops = onOptimize(gStops, gOriginLat, gOriginLng);
-                          setGStops(sortedStops);
-                          alert('Itinerário otimizado! As paradas foram reorganizadas na sequência de melhor tráfego.');
+                          try {
+                            const sortedStops = await onOptimize(gStops, gOriginLat, gOriginLng);
+                            setGStops(sortedStops);
+                            alert('Itinerário otimizado com sucesso via API do Google (optimizeWaypoints:true)!');
+                          } catch (err: any) {
+                            alert('Falha na otimização: ' + err.message);
+                          }
                         }}
                         className="py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-all text-xs cursor-pointer flex gap-1 items-center"
                       >
@@ -2429,97 +2694,179 @@ export function GerenteDashboard({
                 </div>
 
                 {/* Section B: Regional Assigned Routes List (xl:col-span-7) */}
-                <div className="xl:col-span-7 space-y-4">
-                  <span className="font-extrabold text-slate-800 text-xs block uppercase tracking-wider font-mono">
-                    Acompanhamento Regional de Cargas ({regionalRoutes.length} Itinerários)
-                  </span>
+                <div className="xl:col-span-7 bg-slate-50 border border-slate-200 p-5 rounded-2xl shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b pb-2.5">
+                    <div>
+                      <span className="font-extrabold text-slate-800 text-xs block uppercase tracking-wider font-mono">
+                        Acompanhamento Regional de Cargas
+                      </span>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Controlador de fluxo operacional regional para a região {region}</p>
+                    </div>
+                    <span className="bg-slate-200 text-slate-700 border border-slate-300 text-[10px] font-bold px-2.5 py-0.5 rounded-full font-mono">
+                      {filteredRegionalRoutes.length} Itinerários
+                    </span>
+                  </div>
 
-                  <div className="space-y-3.5 max-h-[500px] overflow-y-auto pr-1">
-                    {regionalRoutes.map(item => (
-                      <div key={item.id} className="p-4 border border-slate-200 bg-white rounded-2xl shadow-sm space-y-3 select-text hover:border-slate-350 transition-colors">
-                        <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2">
-                          <div>
-                            <strong className="text-slate-800 text-[13px] font-black">{item.name}</strong>
-                            <p className="text-[10px] text-slate-400 font-semibold font-sans mt-0.5">
-                              Condutor designado: <span className="text-indigo-600 font-extrabold">{item.driverName}</span> 
-                              <span className="font-mono text-[9px] bg-indigo-50 border px-1.5 py-0.2 rounded ml-1 font-bold">[{item.driverPlate}]</span>
-                            </p>
+                  {/* Inline quick filters inside Section B */}
+                  <div className="grid grid-cols-3 gap-2 bg-white p-2 text-xs rounded-xl border border-slate-200 shadow-xs">
+                    <div>
+                      <select
+                        value={filterRouteStatus}
+                        onChange={(e) => setFilterRouteStatus(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-150 text-slate-705 text-[10px] p-1.5 rounded-lg outline-none font-bold"
+                      >
+                        <option value="all">Status: Todos</option>
+                        <option value="draft">Draft</option>
+                        <option value="active">Em Viagem</option>
+                        <option value="completed">Concluída</option>
+                      </select>
+                    </div>
+                    <div>
+                      <select
+                        value={filterRouteDriver}
+                        onChange={(e) => setFilterRouteDriver(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-150 text-slate-705 text-[10px] p-1.5 rounded-lg outline-none font-bold truncate"
+                      >
+                        <option value="all">Condutor: Todos</option>
+                        {regionalDrivers.map(drv => (
+                          <option key={drv.id} value={drv.id}>{drv.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <select
+                        value={filterRouteDate}
+                        onChange={(e) => setFilterRouteDate(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-150 text-slate-705 text-[10px] p-1.5 rounded-lg outline-none font-bold"
+                      >
+                        <option value="all">Período: Todos</option>
+                        <option value="today">Hoje</option>
+                        <option value="week">Esta semana</option>
+                        <option value="month">Este mês</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 max-h-[660px] overflow-y-auto pr-1">
+                    {filteredRegionalRoutes.map(item => {
+                      const completedStopsCount = item.stops.filter(s => s.status === 'completed').length;
+                      const totalStopsCount = item.stops.length;
+                      const percentCompleted = totalStopsCount > 0 ? Math.round((completedStopsCount / totalStopsCount) * 100) : 0;
+
+                      return (
+                        <div key={item.id} className="p-4 border border-slate-200/95 bg-white rounded-2xl shadow-sm space-y-4 select-text hover:border-slate-350 transition-all duration-300">
+                          <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2.5">
+                            <div>
+                              <strong className="text-slate-900 text-sm font-extrabold">{item.name}</strong>
+                              <p className="text-[11px] text-slate-450 font-medium mt-0.5 flex items-center gap-1 flex-wrap">
+                                <span>Condutor:</span>
+                                <span className="text-indigo-650 font-extrabold">{item.driverName}</span> 
+                                <span className="font-mono text-[9px] bg-indigo-50 border border-indigo-100 px-1.5 py-0.2 rounded font-bold">[{item.driverPlate}]</span>
+                              </p>
+                            </div>
+
+                            <div className="flex flex-col text-right shrink-0">
+                              <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase ${
+                                item.status === 'active' ? 'bg-amber-100 text-amber-805 border border-amber-200' :
+                                item.status === 'completed' ? 'bg-emerald-100 text-emerald-805 border border-emerald-250' : 'bg-slate-100 text-slate-500'
+                              }`}>
+                                {item.status === 'active' ? 'Em Viagem 🚚' : item.status === 'completed' ? 'Concluída ✅' : 'Rascunho'}
+                              </span>
+                              <span className="text-[8px] text-slate-400 font-mono mt-0.5">Criada às {new Date(item.createdAt).toLocaleTimeString('pt-BR')}</span>
+                            </div>
                           </div>
 
-                          <div className="flex flex-col text-right shrink-0">
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase ${
-                              item.status === 'active' ? 'bg-amber-100 text-amber-800 border' :
-                              item.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border' : 'bg-slate-100 text-slate-500'
-                            }`}>
-                              {item.status === 'active' ? 'Em Viagem 🚚' : item.status === 'completed' ? 'Concluída ✅' : 'Rascunho'}
-                            </span>
-                            <span className="text-[8px] text-slate-400 font-mono mt-0.5">Mapeado às {new Date(item.createdAt).toLocaleTimeString('pt-BR')}</span>
+                          {/* Efficiency progress bar */}
+                          <div className="space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-150 shadow-inner">
+                            <div className="flex justify-between items-center text-[9px] font-mono font-black text-slate-500">
+                              <span>ENTREGAS CONCLUÍDAS</span>
+                              <span className="text-indigo-600">{percentCompleted}% ({completedStopsCount}/{totalStopsCount})</span>
+                            </div>
+                            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden border border-slate-200/50">
+                              <div 
+                                className="bg-gradient-to-r from-indigo-550 to-emerald-500 h-full transition-all duration-500" 
+                                style={{ width: `${percentCompleted}%` }}
+                              ></div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-slate-500 px-1 leading-snug font-sans">
+                            <p className="truncate">📍 <strong className="text-slate-700 font-bold">Origem:</strong> {item.origin}</p>
+                            <p>🎯 <strong className="text-slate-700 font-bold">Paradas:</strong> {item.stops.length} Clientes</p>
+                          </div>
+
+                          {/* Detailed stops layout with color coded checks */}
+                          <div className="bg-slate-50/50 p-3 rounded-xl border border-slate-200/50 leading-normal space-y-2">
+                            <span className="text-[9px] font-mono text-slate-400 font-bold uppercase tracking-wider block">Manifesto Detalhado das Encomendas:</span>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 font-sans">
+                              {item.stops.map((stop, sIdx) => {
+                                const isDone = stop.status === 'completed';
+                                return (
+                                  <div key={stop.id} className={`p-2 bg-white border rounded-xl text-[10.5px] shadow-sm leading-tight flex justify-between gap-1 items-center hover:bg-slate-50 transition-colors ${isDone ? 'border-emerald-100 bg-emerald-50/10' : 'border-slate-200'}`}>
+                                    <span className="truncate pr-1">
+                                      <span className="font-mono text-[9px] text-slate-400 font-bold mr-1">#{sIdx + 1}</span>
+                                      <strong className="text-slate-700 font-bold">{stop.clientName}</strong>
+                                    </span>
+                                    <span className={`text-[9px] uppercase font-bold shrink-0 px-1.5 py-0.5 rounded font-mono ${isDone ? 'text-emerald-700 bg-emerald-50 border border-emerald-100' : 'text-slate-500 bg-slate-100'}`}>
+                                      {isDone ? 'Concluído' : 'Pendente'}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div className="flex gap-2 items-center pt-2.5 border-t border-slate-100">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setGEditingRouteId(item.id);
+                                setGRouteName(item.name);
+                                setGOrigin(item.origin);
+                                setGSelectedDriverId(item.driverId);
+                                setGStops(item.stops);
+                                // Auto scroll to editor top on mobile
+                                document.getElementById('gerente-main-panel')?.scrollIntoView({ behavior: 'smooth' });
+                              }}
+                              className="flex-1 py-2 px-3 border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white font-extrabold rounded-xl transition-all hover:border-transparent cursor-pointer text-[11px] text-center shadow-sm"
+                            >
+                              Editar Itinerário
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (confirm(`Confirmar exclusão permanente da rota "${item.name}"?`)) {
+                                  onDeleteRoute(item.id);
+                                }
+                              }}
+                              className="py-2 px-3 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-250 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90 flex items-center justify-center shrink-0 shadow-sm"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
-
-                        <div className="grid grid-cols-2 gap-2 text-[11px] leading-snug">
-                          <p className="text-slate-500 text-[10px] truncate">📍 Origem: <span className="font-semibold text-slate-700">{item.origin}</span></p>
-                          <p className="text-slate-500 text-[10px] font-bold">🎯 Paradas: <span className="text-indigo-600">{item.stops.length} entregas</span></p>
-                        </div>
-
-                        {/* Expandable stop elements */}
-                        <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200/55 leading-normal space-y-1.5">
-                          <span className="text-[9px] font-mono text-slate-400 font-bold uppercase tracking-wider block">Manifesto de Paradas (Clientes):</span>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 font-sans">
-                            {item.stops.map((stop, sIdx) => (
-                              <div key={stop.id} className="bg-white p-1.5 border rounded-lg text-[10px] shadow-sm leading-tight flex justify-between gap-1 items-center">
-                                <span className="truncate max-w-[130px]">
-                                  #{sIdx + 1} <strong className="text-slate-700 font-bold">{stop.clientName}</strong>
-                                </span>
-                                <span className={`text-[9px] uppercase font-bold shrink-0 ${stop.status === 'completed' ? 'text-emerald-600' : 'text-slate-400'}`}>
-                                  {stop.status === 'completed' ? 'Sim ✅' : 'Não'}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="flex gap-2 items-center pt-2.5 border-t border-slate-100">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setGEditingRouteId(item.id);
-                              setGRouteName(item.name);
-                              setGOrigin(item.origin);
-                              setGSelectedDriverId(item.driverId);
-                              setGStops(item.stops);
-                              // Auto scroll to editor top on mobile
-                              document.getElementById('gerente-main-panel')?.scrollIntoView({ behavior: 'smooth' });
-                            }}
-                            className="flex-1 py-1.5 px-3 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold rounded-xl transition-all hover:border-indigo-300 cursor-pointer text-[11px] text-center"
-                          >
-                            Editar
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (confirm(`Confirmar exclusão permanente da rota "${item.name}"?`)) {
-                                onDeleteRoute(item.id);
-                              }
-                            }}
-                            className="py-1.5 px-2.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90 flex items-center justify-center shrink-0"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    {regionalRoutes.length === 0 && (
+                      );
+                    })}
+                    {filteredRegionalRoutes.length === 0 && (
                       <div className="text-center py-16 border rounded-2xl border-dashed bg-slate-50/50">
                         <Truck className="w-9 h-9 text-slate-350 mx-auto mb-2 animate-bounce" />
-                        <span className="text-xs font-bold text-slate-500 block">Nenhuma Rota Emitida na Região</span>
-                        <p className="text-[11px] text-slate-400 mt-0.5">Use o painel de criação ao lado para despachar sua primeira carga logística nesta sessão.</p>
+                        <span className="text-xs font-bold text-slate-500 block">Nenhuma Rota Disponível com estes Filtros</span>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Nenhuma rota regional atendeu aos parâmetros aplicados nos filtros operacionais.</p>
                       </div>
                     )}
                   </div>
                 </div>
               </div>
+
+              {/* Secure Excel / CSV Client Importer wizard segment */}
+              <ClientImporter 
+                currentRegion={region}
+                onImportStops={(stops) => {
+                  setGStops(prev => [...prev, ...stops]);
+                }}
+              />
+
             </div>
           ) : (
             // Tabs 2 & 3: Standard active route lists or simple lists fallback
@@ -2555,7 +2902,7 @@ interface MotoristaProps {
   onDeleteRoute: (id: string) => void;
   onStartRoute: (id: string) => void;
   onPostMessage: (text: string, audioUrl?: string) => void;
-  onOptimize: (stops: Parada[], oLat: number, oLng: number) => Parada[];
+  onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
 }
 
 export const GUARIBA_LOCATIONS = [
@@ -2607,6 +2954,51 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const myReceivedRoutes = rotas.filter(r => r.driverId === user.id && r.sentByGerente === true);
   const myCompletedRoutes = myRoutes.filter(r => r.status === 'completed');
   const activeRoute = myRoutes.find(r => r.status === 'active') || null;
+
+  const [isSharingLocation, setIsSharingLocation] = useState(true);
+
+  // Background Geolocation simulator or real GPS tracker
+  useEffect(() => {
+    if (!isSharingLocation || !activeRoute) return;
+
+    let watchId: number | null = null;
+    if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
+      watchId = navigator.geolocation.watchPosition(
+        async (position) => {
+          const lat = position.coords.latitude;
+          const lng = position.coords.longitude;
+          const speed = position.coords.speed !== null ? Math.round(position.coords.speed * 3.6) : (45 + Math.floor(Math.random() * 10)); // convert to km/h or simulated
+          const heading = position.coords.heading !== null ? position.coords.heading : Math.floor(Math.random() * 360);
+          
+          const nextLoc: GPSLocation = {
+            driverId: user.id,
+            lat,
+            lng,
+            heading,
+            speed,
+            lastUpdated: new Date().toISOString(),
+            isSharing: true
+          };
+          
+          try {
+            await saveCloudGPSLocation(nextLoc);
+          } catch (err) {
+            console.warn("Failed to write real GPS background position to Firestore:", err);
+          }
+        },
+        (error) => {
+          console.log("Background Geoloc real position failed or permission blocked. Utilizing simulated auto-progression fallback.", error);
+        },
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      );
+    }
+
+    return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
+  }, [isSharingLocation, activeRoute?.id, user.id]);
 
   const handleSuggestAIPrediction = async () => {
     setIsLoadingAI(true);
@@ -2873,11 +3265,15 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
     }
   };
 
-  const handleRunOptimization = () => {
+  const handleRunOptimization = async () => {
     if (stops.length <= 1) return;
-    const sorted = onOptimize(stops, originLat, originLng);
-    setStops(sorted);
-    alert('Rota Otimizada via Google Directions API (optimizeWaypoints:true)! Paradas foram reordenadas para sequência de trânsito otimizada.');
+    try {
+      const sorted = await onOptimize(stops, originLat, originLng);
+      setStops(sorted);
+      alert('Rota Otimizada via Google Directions API (optimizeWaypoints:true)! Paradas foram reordenadas para sequência de trânsito otimizada.');
+    } catch (err: any) {
+      alert('Falha na otimização: ' + err.message);
+    }
   };
 
   const handlePublishRoute = () => {
@@ -2959,6 +3355,44 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
           >
             <Signal className="w-3.5 h-3.5 text-slate-500" />
             Alternar Sinal
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              const nextSharing = !isSharingLocation;
+              setIsSharingLocation(nextSharing);
+              
+              // Publish the sharing state to Firestore immediately
+              const currentLoc = locations[user.id] || {
+                driverId: user.id,
+                lat: activeRoute?.originLat || -18.845,
+                lng: activeRoute?.originLng || -41.945,
+                heading: 0,
+                speed: 0,
+                lastUpdated: new Date().toISOString()
+              };
+              
+              const updatedLoc: GPSLocation = {
+                ...currentLoc,
+                isSharing: nextSharing,
+                lastUpdated: new Date().toISOString()
+              };
+              
+              try {
+                await saveCloudGPSLocation(updatedLoc);
+              } catch (err: any) {
+                console.error("Erro ao alternar compartilhamento:", err);
+              }
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 border text-[10px] font-bold rounded-xl transition-all cursor-pointer shadow-sm active:scale-95 ${
+              isSharingLocation 
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700 shadow-sm' 
+                : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+            }`}
+          >
+            <Compass className={`w-3.5 h-3.5 ${isSharingLocation ? 'animate-spin' : 'text-rose-500'}`} style={{ animationDuration: '4s' }} />
+            {isSharingLocation ? 'Compartilhando Localização' : 'Compartilhar Localização'}
           </button>
         </div>
       </div>
@@ -3475,14 +3909,18 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (mEditingRouteStops.length <= 1) {
                           alert('Necessita ao menos duas paradas para otimizar.');
                           return;
                         }
-                        const sorted = onOptimize(mEditingRouteStops, -18.845, -41.945);
-                        setMEditingRouteStops(sorted);
-                        alert('Rota de edição otimizada!');
+                        try {
+                          const sorted = await onOptimize(mEditingRouteStops, -18.845, -41.945);
+                          setMEditingRouteStops(sorted);
+                          alert('Rota de edição otimizada via Google Directions API (optimizeWaypoints:true)!');
+                        } catch (err: any) {
+                          alert('Falha na otimização: ' + err.message);
+                        }
                       }}
                       className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex gap-1 items-center cursor-pointer"
                     >
@@ -3789,16 +4227,28 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
         
         {/* Dynamic active trip navigation dashboard overlay */}
         {activeRoute && (
-          <div className="mb-4 bg-emerald-500 text-white rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm animate-pulse">
+          <div className={`mb-4 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm transition-all duration-300 ${
+            isSharingLocation 
+              ? 'bg-emerald-500 text-white animate-pulse' 
+              : 'bg-slate-800 text-slate-300 animate-none'
+          }`}>
             <div>
-              <span className="text-[10px] font-mono font-bold uppercase tracking-widest bg-emerald-700 text-emerald-100 px-2 py-0.5 rounded">JORNADA ATIVA</span>
+              <span className={`text-[10px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
+                isSharingLocation ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-700 text-slate-400'
+              }`}>
+                {isSharingLocation ? 'JORNADA ATIVA' : 'JORNADA PAUSADA'}
+              </span>
               <h3 className="font-bold text-sm mt-1">{activeRoute.name}</h3>
-              <p className="text-xs text-emerald-100">Seu trajeto está sendo rastreado em tempo real na região {region}.</p>
+              <p className="text-xs opacity-90">
+                {isSharingLocation 
+                  ? `Seu trajeto está sendo rastreado em tempo real na região ${region}.`
+                  : 'Compartilhamento de GPS temporariamente suspenso pelo condutor.'}
+              </p>
             </div>
 
             <div className="flex items-center gap-2 self-start sm:self-auto text-xs font-mono">
-              <div className="bg-emerald-600/60 p-2 rounded border border-emerald-400/30">
-                <span className="block text-[9px] uppercase text-emerald-200">Próxima entrega:</span>
+              <div className={`${isSharingLocation ? 'bg-emerald-600/60' : 'bg-slate-700/65'} p-2 rounded border ${isSharingLocation ? 'border-emerald-400/30' : 'border-slate-600/40'}`}>
+                <span className="block text-[9px] uppercase opacity-85">Próxima entrega:</span>
                 <strong className="text-sm font-black whitespace-nowrap">
                   {activeRoute.stops[activeRoute.currentStopIndex]?.clientName || 'Concluída!'}
                 </strong>
