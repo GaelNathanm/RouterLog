@@ -226,6 +226,11 @@ app.post('/api/google/directions-optimize', async (req, res) => {
   }
 });
 
+// Route to serve service worker directly
+app.get('/service-worker.js', (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'service-worker.js'));
+});
+
 // Setup Vite Dev Server / Static Hosting Middleware
 async function start() {
   if (process.env.NODE_ENV !== 'production') {

@@ -4,22 +4,23 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser } from '../types';
+import { UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region } from '../types';
 import { 
   Users, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
   Trash2, AlertCircle, Share2, Navigation, CheckCircle, Send, MessageSquare, 
-  UserCheck, ShieldAlert, Ban, Info, Sparkles, Plus, Map, Play, Check, Phone, ArrowRight,
+  UserCheck, ShieldAlert, Ban, Info, Sparkles, Plus, Map, Play, Check, Phone, ArrowRight, Edit, Pencil,
   Route, Compass, Bell, Settings, Layers, Calendar, BarChart3, Clock, AlertOctagon, HelpCircle, Truck, Signal,
-  Download, Printer, Mic, Square, Pause, Volume2, SlidersHorizontal
+  Download, Printer, Mic, Square, Pause, Volume2, SlidersHorizontal, Camera, RefreshCw, X, FileSpreadsheet
 } from 'lucide-react';
 import InteractiveMap from './InteractiveMap';
 import RegionalMap from './RegionalMap';
 import RouteMap from './RouteMap';
 import ClientImporter from './ClientImporter';
 import WelcomeTutorial from './WelcomeTutorial';
-import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
+import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, ComposedChart, Line } from 'recharts';
+import * as d3 from 'd3';
 import { motion, AnimatePresence } from 'motion/react';
-import { saveCloudGPSLocation } from '../firebase';
+import { saveCloudGPSLocation, SUPABASE_SQL_DDL } from '../supabase';
 
 // ==========================================
 // CENTRALIZED EXPORT HELPERS (CSV & PDF)
@@ -632,9 +633,13 @@ interface AdminProps {
   performanceLogs: RoutePerformanceLog[];
   pushLogs?: PushDeliveryLog[];
   pushConfig?: PushConfig;
+  regions: Region[];
   onImpersonate: (user: RouteUser | null) => void;
   onModerate: (userId: string, action: 'activate' | 'suspend' | 'ban') => void;
+  onUpdateUser: (updatedUser: RouteUser) => void;
   onDeleteUser: (userId: string) => void;
+  onSaveRegion: (region: Region) => Promise<void>;
+  onDeleteRegion: (regionId: string) => Promise<void>;
   onPush: (title: string, body: string, region: string) => void;
   onSendPush?: (
     templateType: 'nova_rota' | 'rota_iniciada' | 'status_parada' | 'urgente_chat' | 'custom',
@@ -643,6 +648,174 @@ interface AdminProps {
     customTitle?: string,
     customBody?: string
   ) => PushDeliveryLog;
+}
+
+// ==========================================
+// D3 HEAVY METRICS HEATMAP VISUALIZATION
+// ==========================================
+export function D3RegionalHeatmap({ performanceLogs = [], regions = [] }: { performanceLogs: RoutePerformanceLog[], regions: Region[] }) {
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; visible: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    if (!svgRef.current || !containerRef.current) return;
+
+    // Clear previous SVG content to avoid duplicating grids on hot reloads
+    d3.select(svgRef.current).selectAll('*').remove();
+
+    // Time buckets represent operating delivery density slots
+    const timeBuckets = ['08h-10h', '10h-12h', '12h-14h', '14h-16h', '16h-18h', '18h-20h'];
+    const regionNames = regions.length > 0 ? regions.map(r => r.id) : ['GV1', 'GV2', 'GV3', 'GV4'];
+
+    const heatmapData: { region: string; time: string; density: number; routeCount: number; stopCount: number }[] = [];
+
+    regionNames.forEach(reg => {
+      timeBuckets.forEach((time, index) => {
+        const regionalRoutes = (performanceLogs || []).filter(p => p.region === reg);
+        const routeCount = regionalRoutes.length;
+        const stopCount = regionalRoutes.reduce((sum, p) => sum + (p.completedStopsCount || 0), 0);
+        
+        let density = 0;
+        if (routeCount > 0) {
+          density = Math.min(10, Math.round((routeCount * 2) + (stopCount * 0.8) + (index === 1 || index === 4 ? 3 : 1)));
+        } else {
+          const baselineHeat = [3, 7, 5, 8, 4, 2];
+          const seed = reg.charCodeAt(0) + reg.charCodeAt(reg.length - 1);
+          density = Math.round((baselineHeat[index] + (seed % 3)) % 10) + 1;
+        }
+
+        heatmapData.push({
+          region: reg,
+          time,
+          density,
+          routeCount: routeCount || Math.round(density / 3) + 1,
+          stopCount: stopCount || Math.round(density * 1.5)
+        });
+      });
+    });
+
+    const margin = { top: 30, right: 30, bottom: 40, left: 70 };
+    const width = containerRef.current.clientWidth - margin.left - margin.right || 450;
+    const height = 180 - margin.top - margin.bottom;
+
+    const svg = d3.select(svgRef.current)
+      .attr('width', width + margin.left + margin.right)
+      .attr('height', height + margin.top + margin.bottom)
+      .append('g')
+      .attr('transform', `translate(${margin.left}, ${margin.top})`);
+
+    const x = d3.scaleBand()
+      .range([0, width])
+      .domain(timeBuckets)
+      .padding(0.05);
+
+    svg.append('g')
+      .attr('transform', `translate(0, ${height})`)
+      .call(d3.axisBottom(x).tickSize(0))
+      .select('.domain').remove();
+
+    svg.selectAll('text')
+      .style('font-size', '9px')
+      .style('font-family', 'ui-monospace, monospace')
+      .style('fill', '#475569');
+
+    const y = d3.scaleBand()
+      .range([height, 0])
+      .domain(regionNames)
+      .padding(0.05);
+
+    svg.append('g')
+      .call(d3.axisLeft(y).tickSize(0))
+      .select('.domain').remove();
+
+    const colorScale = d3.scaleSequential<string>()
+      .interpolator(d3.interpolateRgb('#fff1f2', '#f43f5e'))
+      .domain([0, 10]);
+
+    svg.selectAll()
+      .data(heatmapData, (d: any) => d.region + ':' + d.time)
+      .enter()
+      .append('rect')
+      .attr('x', (d: any) => x(d.time) || 0)
+      .attr('y', (d: any) => y(d.region) || 0)
+      .attr('rx', 4)
+      .attr('ry', 4)
+      .attr('width', x.bandwidth())
+      .attr('height', y.bandwidth())
+      .style('fill', (d: any) => colorScale(d.density))
+      .style('stroke-width', 1.5)
+      .style('stroke', '#ffffff')
+      .style('opacity', 0.9)
+      .style('cursor', 'pointer')
+      .on('mouseover', function(event, d: any) {
+        d3.select(this)
+          .style('stroke', '#1e293b')
+          .style('opacity', 1);
+        
+        const tooltipText = `Região: ${d.region} | Horário: ${d.time} | Densidade de Entregas: ${d.density}/10 | Rotas: ${d.routeCount} | Entregas: ${d.stopCount}`;
+        
+        setTooltip({
+          x: event.clientX,
+          y: event.clientY,
+          visible: true,
+          text: tooltipText
+        });
+      })
+      .on('mousemove', function(event) {
+        setTooltip(prev => prev ? { ...prev, x: event.clientX, y: event.clientY } : null);
+      })
+      .on('mouseleave', function() {
+        d3.select(this)
+          .style('stroke', '#ffffff')
+          .style('opacity', 0.9);
+        setTooltip(null);
+      });
+
+    svg.selectAll()
+      .data(heatmapData)
+      .enter()
+      .append('text')
+      .attr('x', (d: any) => (x(d.time) || 0) + x.bandwidth() / 2)
+      .attr('y', (d: any) => (y(d.region) || 0) + y.bandwidth() / 2 + 3)
+      .attr('text-anchor', 'middle')
+      .text((d: any) => d.density)
+      .style('fill', (d: any) => d.density > 6 ? '#ffffff' : '#4f46e5')
+      .style('font-size', '9px')
+      .style('font-weight', 'bold')
+      .style('font-family', 'sans-serif')
+      .style('pointer-events', 'none');
+
+  }, [performanceLogs, regions]);
+
+  return (
+    <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50 w-full" ref={containerRef}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5">
+          <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping" />
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">D3 MAPA DE CALOR: DENSIDADE DE ENTREGAS POR REGIÃO & HORA</span>
+        </div>
+        <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono">
+          <span>BAIXA DENSIDADE</span>
+          <div className="w-16 h-2 bg-gradient-to-r from-rose-50 to-rose-600 rounded" />
+          <span>ALTA DENSIDADE</span>
+        </div>
+      </div>
+      
+      <div className="flex justify-center content-center select-none overflow-x-auto">
+        <svg ref={svgRef} className="overflow-visible min-w-[380px]" />
+      </div>
+
+      {tooltip && tooltip.visible && (
+        <div 
+          className="fixed z-50 bg-slate-900 border border-slate-800 text-white text-[10px] font-mono p-2 rounded-lg shadow-2xl pointer-events-none transform -translate-x-1/2 -translate-y-12 backdrop-blur-sm max-w-[280px]"
+          style={{ left: tooltip.x, top: tooltip.y }}
+        >
+          {tooltip.text}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function AdminDashboard({ 
@@ -654,14 +827,18 @@ export function AdminDashboard({
   breadcrumbs,
   notifications, 
   performanceLogs, 
+  regions,
   onImpersonate, 
   onModerate,
+  onUpdateUser,
   onDeleteUser,
+  onSaveRegion,
+  onDeleteRegion,
   onPush,
   onSendPush
 }: AdminProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'users' | 'analytics' | 'chats' | 'audits' | 'desempenho' | 'mapa'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'analytics' | 'chats' | 'audits' | 'desempenho' | 'mapa' | 'regioes'>('users');
   const [showTutorial, setShowTutorial] = useState(false);
   const [pushTitle, setPushTitle] = useState('');
   const [pushBody, setPushBody] = useState('');
@@ -669,6 +846,80 @@ export function AdminDashboard({
   const [pushRoleTarget, setPushRoleTarget] = useState<'all' | UserRole>('all');
   const [pushRegionTarget, setPushRegionTarget] = useState<string>('all');
   const [userToDeleteId, setUserToDeleteId] = useState<string | null>(null);
+
+  // States for Editing Users
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [editedName, setEditedName] = useState('');
+  const [editedEmail, setEditedEmail] = useState('');
+  const [editedPhone, setEditedPhone] = useState('');
+  const [editedRegion, setEditedRegion] = useState('');
+
+  // States for Region Administration
+  const [regId, setRegId] = useState('');
+  const [regName, setRegName] = useState('');
+  const [regState, setRegState] = useState('Espírito Santo');
+  const [regLat, setRegLat] = useState(-18.85);
+  const [regLng, setRegLng] = useState(-41.94);
+  const [regRadius, setRegRadius] = useState(1500);
+  const [editingRegId, setEditingRegId] = useState<string | null>(null);
+  const [regError, setRegError] = useState<string | null>(null);
+  const [regSuccess, setRegSuccess] = useState<string | null>(null);
+
+  // Dynamic universal search categories matching
+  const searchResults = useMemo(() => {
+    if (!searchTerm || searchTerm.trim().length < 2) return null;
+    const term = searchTerm.toLowerCase().trim();
+
+    // 1. Matches Drivers
+    const drivers = users
+      .filter(u => u.role === UserRole.MOTORISTA && (
+        u.name.toLowerCase().includes(term) ||
+        u.email.toLowerCase().includes(term) ||
+        (u as any).plate?.toLowerCase().includes(term)
+      ))
+      .slice(0, 4);
+
+    // 2. Matches Routes
+    const matchedRoutes = rotas
+      .filter(r => (
+        r.name.toLowerCase().includes(term) ||
+        r.region.toLowerCase().includes(term) ||
+        r.driverName.toLowerCase().includes(term)
+      ))
+      .slice(0, 4);
+
+    // 3. Matches Clients
+    const matchedClients: { clientName: string; address: string; routeName: string; whatsApp?: string }[] = [];
+    rotas.forEach(r => {
+      r.stops.forEach(st => {
+        if (
+          st.clientName.toLowerCase().includes(term) ||
+          st.address.toLowerCase().includes(term) ||
+          (st.clientWhatsApp && st.clientWhatsApp.includes(term))
+        ) {
+          if (!matchedClients.some(c => c.clientName === st.clientName)) {
+            matchedClients.push({
+              clientName: st.clientName,
+              address: st.address,
+              routeName: r.name,
+              whatsApp: st.clientWhatsApp
+            });
+          }
+        }
+      });
+    });
+
+    return {
+      drivers,
+      routes: matchedRoutes,
+      clients: matchedClients.slice(0, 4)
+    };
+  }, [searchTerm, users, rotas]);
+  const [editedPlate, setEditedPlate] = useState('');
+  const [editedVehicleModel, setEditedVehicleModel] = useState('');
+  const [editedCnh, setEditedCnh] = useState('');
+  const [editedCnhCategory, setEditedCnhCategory] = useState('');
+  const [editedCnhExpiration, setEditedCnhExpiration] = useState('');
 
   const filteredUsers = users.filter(u => 
     u.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -716,13 +967,99 @@ export function AdminDashboard({
             <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>Guia do Usuário</span>
           </button>
-          <input
-            type="text"
-            placeholder="Pesquisa Universal..."
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            className="bg-slate-850 border border-slate-700 text-white p-2 text-xs rounded-lg placeholder-slate-500 w-[200px]"
-          />
+          
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Pesquisa Universal..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="bg-slate-850 border border-slate-700 text-white p-2 text-xs rounded-lg placeholder-slate-500 w-[200px]"
+            />
+            {searchResults && (
+              <div className="absolute right-0 top-full mt-2 w-[320px] md:w-[465px] bg-white border border-slate-200 shadow-2xl rounded-2xl p-4.5 z-50 overflow-y-auto max-h-[380px] space-y-4 text-slate-800 text-left border-t-8 border-t-indigo-600">
+                <div className="flex items-center justify-between border-b pb-2 select-none">
+                  <span className="font-extrabold text-[10px] text-slate-400 uppercase tracking-widest">Resultado de Busca Rápida</span>
+                  <button 
+                    type="button"
+                    onClick={() => setSearchTerm('')}
+                    className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded font-black uppercase"
+                  >
+                    Limpar
+                  </button>
+                </div>
+
+                {searchResults.drivers.length === 0 && searchResults.routes.length === 0 && searchResults.clients.length === 0 ? (
+                  <div className="text-center py-6 text-slate-400 font-medium">Nenhum registro correspondente encontrado para "{searchTerm}"</div>
+                ) : (
+                  <div className="space-y-4">
+                    {/* Drivers category */}
+                    {searchResults.drivers.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[9px] font-black text-indigo-600 block uppercase tracking-wider font-mono">Motoristas Ativos 👀</span>
+                        <div className="space-y-1">
+                          {searchResults.drivers.map(drv => (
+                            <div key={drv.id} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between transition-all hover:bg-slate-100/50">
+                              <div>
+                                <strong className="block text-slate-850 text-xs font-semibold">{drv.name}</strong>
+                                <span className="text-[10px] text-slate-400 block mt-0.5">E-mail: {drv.email} {(drv as any).region ? `| Região: ${(drv as any).region}` : ''}</span>
+                              </div>
+                              <span className="bg-indigo-50 border border-indigo-150 text-indigo-700 font-mono text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0">
+                                Placa: {(drv as any).plate || 'RTL-1234'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Routes category */}
+                    {searchResults.routes.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[9px] font-black text-indigo-600 block uppercase tracking-wider font-mono">Rotas Logísticas 📦</span>
+                        <div className="space-y-1">
+                          {searchResults.routes.map(rt => (
+                            <div key={rt.id} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between transition-all hover:bg-slate-100/50">
+                              <div className="min-w-0 pr-2">
+                                <strong className="block text-slate-850 text-xs font-semibold truncate">{rt.name}</strong>
+                                <span className="text-[10px] text-slate-400 block mt-0.5 truncate">Origem: {rt.origin} | Região: {rt.region}</span>
+                              </div>
+                              <span className={`font-mono text-[8px] text-white font-black uppercase px-2 py-0.5 rounded shrink-0 ${
+                                rt.status === 'completed' ? 'bg-emerald-500' : rt.status === 'active' ? 'bg-indigo-500 animate-pulse' : 'bg-slate-400'
+                              }`}>
+                                {rt.status}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Clients category */}
+                    {searchResults.clients.length > 0 && (
+                      <div className="space-y-1.5">
+                        <span className="text-[9px] font-black text-indigo-600 block uppercase tracking-wider font-mono">Clientes / Destinatários 👤</span>
+                        <div className="space-y-1">
+                          {searchResults.clients.map((cl, cidx) => (
+                            <div key={cidx} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl transition-all hover:bg-slate-100/50">
+                              <div className="flex items-center justify-between pr-1 gap-2">
+                                <strong className="text-slate-850 text-xs font-semibold truncate">{cl.clientName}</strong>
+                                {cl.whatsApp && <span className="text-[9px] font-mono font-bold text-emerald-600 shrink-0">💬 {cl.whatsApp}</span>}
+                              </div>
+                              <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{cl.address}</p>
+                              <span className="text-[8px] text-slate-500 bg-slate-200/60 inline-block mt-1 px-1.5 py-0.5 rounded font-mono font-bold leading-none select-none">
+                                Rota associada: {cl.routeName}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -758,7 +1095,7 @@ export function AdminDashboard({
             <Globe className="w-4 h-4 text-blue-500" />
           </div>
           <div className="text-2xl font-black text-slate-800">7</div>
-          <span className="text-[10px] text-slate-450 font-mono">GV1, GV2, GV3, MG, etc.</span>
+          <span className="text-[10px] text-slate-450 font-mono">GV1, GV2, GV3, ES/MG, etc.</span>
         </div>
       </div>
 
@@ -812,6 +1149,14 @@ export function AdminDashboard({
         >
           Google Maps Cobertura
         </button>
+        <button
+          onClick={() => setActiveTab('regioes')}
+          className={`py-2.5 px-4 font-semibold border-b-2 -mb-px transition-all ${
+            activeTab === 'regioes' ? 'border-rose-600 text-rose-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          Filiais & Regiões do Brasil
+        </button>
       </div>
 
       {/* TAB 1: USER LIST WITH ENFORCEMENT & IMPERSONATION */}
@@ -831,109 +1176,283 @@ export function AdminDashboard({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.2, delay: Math.min(idx * 0.02, 0.4) }}
-                  className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50/50 transition-colors"
+                  className="p-4 border-b border-slate-100 hover:bg-slate-50/50 transition-colors"
                 >
-                <div className="space-y-1 text-xs">
-                  <div className="flex items-center gap-2">
-                    <strong className="text-sm font-bold text-slate-800">{user.name}</strong>
-                    <span className="text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono font-bold text-slate-600 uppercase">
-                      REG: {(user as any).region || 'GLOBAL'}
-                    </span>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono capitalize ${
-                      user.status === 'active' ? 'bg-green-50 text-green-700 border border-green-100' :
-                      user.status === 'suspended' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
-                      'bg-rose-50 text-rose-700 border border-rose-100'
-                    }`}>
-                      {user.status}
-                    </span>
-                  </div>
-                  <p className="text-slate-500 font-mono">{user.email} • {user.phone}</p>
-                  
-                  {user.role === UserRole.MOTORISTA && (
-                    <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-450 bg-slate-50 p-1.5 rounded border border-slate-100 w-fit">
-                      <span>Placa: <strong>{(user as any).plate}</strong></span>
-                      <span>•</span>
-                      <span>CNH: <strong>{(user as any).cnh} ({(user as any).cnhCategory})</strong></span>
-                    </div>
-                  )}
-                </div>
+                  {editingUserId === user.id ? (
+                    <div className="space-y-3.5 bg-slate-50 border border-slate-200 rounded-2xl p-4 font-sans text-xs shadow-inner">
+                      <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                        <span className="font-extrabold text-[11px] uppercase tracking-wider text-indigo-800 flex items-center gap-1">
+                          <Pencil className="w-3.5 h-3.5 text-indigo-600 animate-bounce" />
+                          Modo Edição: {user.name}
+                        </span>
+                        <span className="text-[9px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-mono uppercase font-bold">
+                          PAPEL: {UserRole[user.role]}
+                        </span>
+                      </div>
 
-                <div className="flex items-center gap-2 self-start md:self-auto">
-                  {/* Impersonator selector */}
-                  {user.role !== UserRole.ADMIN && (
-                    <button
-                      onClick={() => onImpersonate(user)}
-                      className="flex items-center gap-1 px-3 py-1.5 border border-blue-200 rounded-lg text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors cursor-pointer"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      Visualizar Como
-                    </button>
-                  )}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Nome Completo</label>
+                          <input 
+                            type="text"
+                            value={editedName}
+                            onChange={e => setEditedName(e.target.value)}
+                            className="w-full border border-slate-200 bg-white rounded-xl p-2 font-medium text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Email Corporativo</label>
+                          <input 
+                            type="email"
+                            value={editedEmail}
+                            onChange={e => setEditedEmail(e.target.value)}
+                            className="w-full border border-slate-200 bg-white rounded-xl p-2 font-medium text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Telefone / Whats</label>
+                          <input 
+                            type="text"
+                            value={editedPhone}
+                            onChange={e => setEditedPhone(e.target.value)}
+                            className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                      </div>
 
-                  {/* Actions to Moderate */}
-                  {user.role !== UserRole.ADMIN && (
-                    <div className="flex items-center gap-1.5 border-l border-slate-200 pl-2">
-                      {user.status !== 'active' && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div>
+                          <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Região Operacional</label>
+                          <select 
+                            value={editedRegion}
+                            onChange={e => setEditedRegion(e.target.value)}
+                            className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-xs text-slate-800 focus:ring-1 focus:ring-rose-500"
+                          >
+                            {regions.map(r => (
+                              <option key={r.id} value={r.id}>
+                                {r.id} - {r.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {user.role === UserRole.MOTORISTA && (
+                          <>
+                            <div>
+                              <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Placa do Veículo</label>
+                              <input 
+                                type="text"
+                                value={editedPlate}
+                                onChange={e => setEditedPlate(e.target.value)}
+                                className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-[11.5px] uppercase tracking-wider text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Modelo do Veículo</label>
+                              <input 
+                                type="text"
+                                value={editedVehicleModel}
+                                onChange={e => setEditedVehicleModel(e.target.value)}
+                                className="w-full border border-slate-200 bg-white rounded-xl p-2 font-medium text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                              />
+                            </div>
+                          </>
+                        )}
+                      </div>
+
+                      {user.role === UserRole.MOTORISTA && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-slate-200 pt-2.5">
+                          <div>
+                            <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Número CNH</label>
+                            <input 
+                              type="text"
+                              value={editedCnh}
+                              onChange={e => setEditedCnh(e.target.value)}
+                              className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Categoria CNH</label>
+                            <input 
+                              type="text"
+                              value={editedCnhCategory}
+                              onChange={e => setEditedCnhCategory(e.target.value)}
+                              className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Validade CNH</label>
+                            <input 
+                              type="date"
+                              value={editedCnhExpiration}
+                              onChange={e => setEditedCnhExpiration(e.target.value)}
+                              className="w-full border border-slate-200 bg-white rounded-xl p-1.5 text-[11.5px] text-slate-800 focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 justify-end pt-2 border-t border-slate-200">
                         <button
-                          onClick={() => onModerate(user.id, 'activate')}
-                          className="p-1 px-2 text-[10px] font-bold border border-emerald-200 text-emerald-700 bg-emerald-50 rounded hover:bg-emerald-100 cursor-pointer"
+                          type="button"
+                          onClick={() => {
+                            const updatedUser = {
+                              ...user,
+                              name: editedName,
+                              email: editedEmail,
+                              phone: editedPhone,
+                              region: editedRegion,
+                              plate: editedPlate,
+                              vehicleModel: editedVehicleModel,
+                              cnh: editedCnh,
+                              cnhCategory: editedCnhCategory,
+                              cnhExpiration: editedCnhExpiration
+                            } as any;
+                            onUpdateUser(updatedUser);
+                            setEditingUserId(null);
+                            alert(`Ficha cadastral de ${editedName} atualizada com sucesso!`);
+                          }}
+                          className="px-4 py-2 bg-indigo-600 hover:bg-slate-900 text-white font-extrabold rounded-xl shadow-md transition-colors cursor-pointer text-xs"
                         >
-                          Ativar
+                          Confirmar Edição
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          onClick={() => setEditingUserId(null)}
+                          className="px-3.5 py-2 border border-slate-250 text-slate-550 hover:bg-slate-100 rounded-xl font-bold transition-all cursor-pointer text-xs"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="space-y-1 text-xs">
+                        <div className="flex items-center gap-2">
+                          <strong className="text-sm font-bold text-slate-800">{user.name}</strong>
+                          <span className="text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono font-bold text-slate-600 uppercase">
+                            REG: {(user as any).region || 'GLOBAL'}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-mono capitalize ${
+                            user.status === 'active' ? 'bg-green-50 text-green-700 border border-green-100' :
+                            user.status === 'suspended' ? 'bg-yellow-50 text-yellow-700 border border-yellow-100' :
+                            'bg-rose-50 text-rose-700 border border-rose-100'
+                          }`}>
+                            {user.status}
+                          </span>
+                        </div>
+                        <p className="text-slate-500 font-mono">{user.email} • {user.phone}</p>
+                        
+                        {user.role === UserRole.MOTORISTA && (
+                          <div className="mt-1 flex items-center gap-2 text-[10px] text-slate-450 bg-slate-50 p-1.5 rounded border border-slate-100 w-fit">
+                            <span>Placa: <strong>{(user as any).plate}</strong></span>
+                            <span>•</span>
+                            <span>CNH: <strong>{(user as any).cnh} ({(user as any).cnhCategory})</strong></span>
+                            <span>•</span>
+                            <span>Veículo: <strong>{(user as any).vehicleModel}</strong></span>
+                          </div>
+                        )}
+                      </div>
 
-                      {user.status === 'active' && (
-                        <>
+                      <div className="flex items-center gap-2 self-start md:self-auto">
+                        {/* Impersonator selector */}
+                        {user.role !== UserRole.ADMIN && (
                           <button
-                            onClick={() => onModerate(user.id, 'suspend')}
-                            title="Suspender Temporariamente para Averiguação Logística"
-                            className="p-1.5 border border-yellow-200 text-yellow-700 bg-yellow-50 rounded hover:bg-yellow-100 cursor-pointer"
+                            onClick={() => onImpersonate(user)}
+                            className="flex items-center gap-1 px-3 py-1.5 border border-blue-200 rounded-lg text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 transition-colors cursor-pointer"
                           >
-                            <AlertCircle className="w-3.5 h-3.5" />
+                            <Eye className="w-3.5 h-3.5" />
+                            Visualizar Como
                           </button>
-                          <button
-                            onClick={() => onModerate(user.id, 'ban')}
-                            title="Banimento Permanente (Adicionar na Blacklist)"
-                            className="p-1.5 border border-rose-200 text-rose-700 bg-rose-50 rounded hover:bg-rose-105 cursor-pointer"
-                          >
-                            <Ban className="w-3.5 h-3.5" />
-                          </button>
-                        </>
-                      )}
+                        )}
 
-                      {/* Excluir Usuário definitely with inline confirmation */}
-                      {userToDeleteId === user.id ? (
-                        <div className="flex items-center gap-1 bg-red-50 border border-red-200 p-0.5 px-1.5 rounded animate-pulse">
-                          <span className="text-[10px] text-red-700 font-bold">Excluir?</span>
+                        {user.role !== UserRole.ADMIN && (
                           <button
                             onClick={() => {
-                              onDeleteUser(user.id);
-                              setUserToDeleteId(null);
+                              setEditingUserId(user.id);
+                              setEditedName(user.name);
+                              setEditedEmail(user.email);
+                              setEditedPhone(user.phone);
+                              setEditedRegion((user as any).region || (regions[0]?.id || 'GV1'));
+                              setEditedPlate((user as any).plate || '');
+                              setEditedVehicleModel((user as any).vehicleModel || '');
+                              setEditedCnh((user as any).cnh || '');
+                              setEditedCnhCategory((user as any).cnhCategory || '');
+                              setEditedCnhExpiration((user as any).cnhExpiration || '');
                             }}
-                            className="text-[9px] bg-red-600 hover:bg-red-705 text-white font-bold p-0.5 px-1.5 rounded cursor-pointer leading-tight"
+                            className="flex items-center gap-1 px-3 py-1.5 border border-amber-250 rounded-lg text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors cursor-pointer"
                           >
-                            Sim
+                            <Edit className="w-3.5 h-3.5 text-amber-600" />
+                            Editar Usuário
                           </button>
-                          <button
-                            onClick={() => setUserToDeleteId(null)}
-                            className="text-[9px] bg-slate-200 hover:bg-slate-350 text-slate-700 p-0.5 px-1.5 rounded cursor-pointer leading-tight"
-                          >
-                            Não
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => setUserToDeleteId(user.id)}
-                          title="Excluir Usuário Definitivamente"
-                          className="p-1.5 border border-red-200 text-red-600 bg-red-50 hover:bg-red-105 hover:text-red-700 rounded transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
+                        )}
+
+                        {/* Actions to Moderate */}
+                        {user.role !== UserRole.ADMIN && (
+                          <div className="flex items-center gap-1.5 border-l border-slate-200 pl-2">
+                            {user.status !== 'active' && (
+                              <button
+                                onClick={() => onModerate(user.id, 'activate')}
+                                className="p-1 px-2 text-[10px] font-bold border border-emerald-200 text-emerald-700 bg-emerald-50 rounded hover:bg-emerald-100 cursor-pointer"
+                              >
+                                Ativar
+                              </button>
+                            )}
+
+                            {user.status === 'active' && (
+                              <>
+                                <button
+                                  onClick={() => onModerate(user.id, 'suspend')}
+                                  title="Suspender Temporariamente para Averiguação Logística"
+                                  className="p-1.5 border border-yellow-200 text-yellow-700 bg-yellow-50 rounded hover:bg-yellow-100 cursor-pointer"
+                                >
+                                  <AlertCircle className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => onModerate(user.id, 'ban')}
+                                  title="Banimento Permanente (Adicionar na Blacklist)"
+                                  className="p-1.5 border border-rose-200 text-rose-700 bg-rose-50 rounded hover:bg-rose-105 cursor-pointer"
+                                >
+                                  <Ban className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+
+                            {/* Excluir Usuário definitely with inline confirmation */}
+                            {userToDeleteId === user.id ? (
+                              <div className="flex items-center gap-1 bg-red-50 border border-red-200 p-0.5 px-1.5 rounded animate-pulse">
+                                <span className="text-[10px] text-red-700 font-bold">Excluir?</span>
+                                <button
+                                  onClick={() => {
+                                    onDeleteUser(user.id);
+                                    setUserToDeleteId(null);
+                                  }}
+                                  className="text-[9px] bg-red-600 hover:bg-red-705 text-white font-bold p-0.5 px-1.5 rounded cursor-pointer leading-tight"
+                                >
+                                  Sim
+                                </button>
+                                <button
+                                  onClick={() => setUserToDeleteId(null)}
+                                  className="text-[9px] bg-slate-200 hover:bg-slate-350 text-slate-700 p-0.5 px-1.5 rounded cursor-pointer leading-tight"
+                                >
+                                  Não
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setUserToDeleteId(user.id)}
+                                title="Excluir Usuário Definitivamente"
+                                className="p-1.5 border border-red-200 text-red-600 bg-red-50 hover:bg-red-105 hover:text-red-700 rounded transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
-                </div>
-              </motion.div>
+                </motion.div>
             ))}
             </AnimatePresence>
           </div>
@@ -1065,8 +1584,8 @@ export function AdminDashboard({
                   className="w-full border border-slate-200 p-2 rounded-lg bg-white"
                 >
                   <option value="all">Todas as Regiões (Global)</option>
-                  {['GV1', 'GV2', 'GV3', 'ES/MG', 'Norte', 'Sul', '262'].map(r => (
-                    <option key={r} value={r}>Apenas Operadores de {r}</option>
+                  {regions.map(r => (
+                    <option key={r.id} value={r.id}>Apenas Operadores de {r.id} ({r.name})</option>
                   ))}
                 </select>
               </div>
@@ -1104,8 +1623,8 @@ export function AdminDashboard({
                 className="border border-slate-250 p-1.5 rounded-lg bg-slate-50 text-[11px] font-medium"
               >
                 <option value="all">Todas as Regiões Combinadas</option>
-                {['GV1', 'GV2', 'GV3', 'ES/MG', 'Norte', 'Sul', '262'].map(r => (
-                  <option key={r} value={r}>Apenas {r}</option>
+                {regions.map(r => (
+                  <option key={r.id} value={r.id}>Apenas {r.id} ({r.name})</option>
                 ))}
               </select>
             </div>
@@ -1210,6 +1729,9 @@ export function AdminDashboard({
                         </div>
                       </div>
                     </div>
+
+                    {/* D3 Regional Heatmap for traffic and delivery density */}
+                    <D3RegionalHeatmap performanceLogs={performanceLogs} regions={regions} />
 
                     {/* Operational Telemetry Tables */}
                     <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
@@ -1320,7 +1842,650 @@ export function AdminDashboard({
             currentUserRegion="all"
             currentUserRole={0} // Admin role matches UserRole.ADMIN
             breadcrumbs={breadcrumbs}
+            regions={regions}
           />
+        </div>
+      )}
+
+      {activeTab === 'regioes' && (
+        <div className="space-y-6">
+          {/* PAINEL DE METRICAS SUPERIOR: Densidade de Frota por Região */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center gap-4">
+              <div className="p-3 bg-rose-50 rounded-xl text-rose-600">
+                <Globe className="w-5 h-5 animate-spin-slow" />
+              </div>
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Total de Regiões</span>
+                <span className="text-2xl font-black text-slate-900">{regions.length}</span>
+                <span className="text-[10px] text-slate-500 block">Setores operacionais ativos</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center gap-4">
+              <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                <Truck className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Motoristas Alocados</span>
+                <span className="text-2xl font-black text-slate-900">
+                  {users.filter(u => u.role === UserRole.MOTORISTA).length}
+                </span>
+                <span className="text-[10px] text-slate-500 block">Total na base integrada</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center gap-4">
+              <div className="p-3 bg-cyan-50 rounded-xl text-cyan-600">
+                <UserCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Motoristas Ativos</span>
+                <span className="text-2xl font-black text-slate-900">
+                  {users.filter(u => u.role === UserRole.MOTORISTA && u.status === 'active').length}
+                </span>
+                <span className="text-[10px] text-emerald-600 font-semibold block flex items-center gap-0.5">
+                  ● {users.filter(u => u.role === UserRole.MOTORISTA && u.status === 'active').length} prontos para rota
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex items-center gap-4">
+              <div className="p-3 bg-slate-50 rounded-xl text-slate-600">
+                <BarChart3 className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Média de Frota</span>
+                <span className="text-md font-bold text-slate-800">
+                  {(users.filter(u => u.role === UserRole.MOTORISTA).length / Math.max(1, regions.length)).toFixed(1)} / reg
+                </span>
+                <span className="text-[10px] text-slate-500 block">Motoristas por região filial</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            
+            {/* Form de Cadastro / Edição (Lado Esquerdo - 4 colunas) */}
+            <div className="lg:col-span-4 bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <span className="font-bold text-slate-800 text-xs uppercase tracking-wider block">
+                  {editingRegId ? '✏️ Editar Territorialidade' : '➕ Nova Territorialidade'}
+                </span>
+                {editingRegId && (
+                  <span className="text-[10px] font-mono bg-amber-50 text-amber-600 border border-amber-200 px-2 py-0.5 rounded-full font-bold">
+                    ID: {regId}
+                  </span>
+                )}
+              </div>
+
+              {/* SISTEMA DE ALERTAS COM VALIDAÇÃO VISUAL */}
+              {regError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs flex items-start gap-2 animate-pulse">
+                  <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-bold block">Erro de Validação:</strong>
+                    <span>{regError}</span>
+                  </div>
+                </div>
+              )}
+
+              {regSuccess && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="font-bold block font-sans">Sucesso!</strong>
+                    <span>{regSuccess}</span>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">CÓDIGO ID DA REGIÃO</label>
+                  <input
+                    type="text"
+                    disabled={!!editingRegId}
+                    value={regId}
+                    onChange={e => {
+                      setRegError(null);
+                      setRegId(e.target.value.toUpperCase().replace(/[^A-Z0-9_/]/g, ''));
+                    }}
+                    placeholder="Ex: SP, RJ-1, CERRADO, GV4"
+                    className="w-full text-xs font-mono border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:border-rose-500 disabled:bg-slate-100 disabled:text-slate-400 focus:ring-1 focus:ring-rose-500"
+                  />
+                  <p className="text-[9px] text-slate-400 mt-0.5">Apenas letras maiúsculas, números e / sem espaços.</p>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">NOME DA REGIÃO / DESCRIÇÃO COMPLETA</label>
+                  <input
+                    type="text"
+                    value={regName}
+                    onChange={e => {
+                      setRegError(null);
+                      setRegName(e.target.value);
+                    }}
+                    placeholder="Ex: Grande Vitória (Cariacica)"
+                    className="w-full text-xs border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:border-rose-500 focus:ring-1 focus:ring-rose-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">ESTADO / TERRITÓRIO BRASILEIRO</label>
+                  <select
+                    value={regState}
+                    onChange={e => setRegState(e.target.value)}
+                    className="w-full text-xs border border-slate-200 p-2.5 rounded-lg bg-white focus:outline-none focus:border-rose-500 cursor-pointer focus:ring-1 focus:ring-rose-500"
+                  >
+                    <option value="Espírito Santo">Espírito Santo (ES)</option>
+                    <option value="Minas Gerais">Minas Gerais (MG)</option>
+                    <option value="Rio de Janeiro">Rio de Janeiro (RJ)</option>
+                    <option value="São Paulo">São Paulo (SP)</option>
+                    <option value="Bahia">Bahia (BA)</option>
+                    <option value="Paraná">Paraná (PR)</option>
+                    <option value="Santa Catarina">Santa Catarina (SC)</option>
+                    <option value="Rio Grande do Sul">Rio Grande do Sul (RS)</option>
+                    <option value="Goiás">Goiás (GO)</option>
+                    <option value="Distrito Federal">Distrito Federal (DF)</option>
+                    <option value="Outro">Outro Estado Brasileiro</option>
+                  </select>
+                </div>
+
+                {/* GEOFENCING CONFIGURATION (GPS COORDINATES AND RANGE BOUNDARY) */}
+                <div className="bg-slate-50 border border-slate-150 p-3 rounded-lg space-y-2 mt-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block">Geofence GPS da Base Operacional</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-500">LATITUDE 📍</label>
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={regLat}
+                        onChange={e => setRegLat(parseFloat(e.target.value) || 0)}
+                        placeholder="Ex: -19.93"
+                        className="w-full text-xs font-mono border border-slate-200 p-2 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-rose-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-500">LONGITUDE 📍</label>
+                      <input
+                        type="number"
+                        step="0.000001"
+                        value={regLng}
+                        onChange={e => setRegLng(parseFloat(e.target.value) || 0)}
+                        placeholder="Ex: -43.94"
+                        className="w-full text-xs font-mono border border-slate-200 p-2 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-rose-500"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-bold text-slate-500">RAIO DO GEOFENCE (METROS) 🎯</label>
+                    <input
+                      type="number"
+                      value={regRadius}
+                      onChange={e => setRegRadius(parseInt(e.target.value) || 0)}
+                      placeholder="Ex: 1500"
+                      className="w-full text-xs font-mono border border-slate-200 p-2 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-rose-500"
+                    />
+                    <p className="text-[8px] text-slate-400 mt-0.5">Disparar notificação quando o condutor cruzar esta distância.</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={async () => {
+                    const cleanedId = regId.trim();
+                    const cleanedName = regName.trim();
+
+                    // TRATAMENTOS DE VALIDAÇÃO
+                    if (!cleanedId) {
+                      setRegError('Por favor, informe o Código ID da região.');
+                      return;
+                    }
+                    if (!cleanedName) {
+                      setRegError('Por favor, defina um Nome de cobertura descritivo.');
+                      return;
+                    }
+                    if (cleanedId.length < 2) {
+                      setRegError('O Código ID da região deve conter ao menos 2 caracteres.');
+                      return;
+                    }
+                    if (cleanedName.length < 4) {
+                      setRegError('O Nome da Região deve ser descritivo (mínimo de 4 caracteres).');
+                      return;
+                    }
+
+                    // Impedir criação duplicada de ID
+                    if (!editingRegId && regions.some(r => r.id.toLowerCase() === cleanedId.toLowerCase())) {
+                      setRegError(`Código ID "${cleanedId}" já se encontra cadastrado em outra região existente.`);
+                      return;
+                    }
+
+                    setRegError(null);
+                    const payload: Region = {
+                      id: cleanedId,
+                      name: cleanedName,
+                      description: `${cleanedName} - ${regState}`,
+                      lat: regLat,
+                      lng: regLng,
+                      radius: regRadius
+                    };
+
+                    try {
+                      await onSaveRegion(payload);
+                      setRegSuccess(`Sucesso! Região "${cleanedId}" salva com sucesso.`);
+                      setTimeout(() => setRegSuccess(null), 4000);
+                      
+                      // Clear form
+                      setRegId('');
+                      setRegName('');
+                      setEditingRegId(null);
+                      setRegLat(-18.85);
+                      setRegLng(-41.94);
+                      setRegRadius(1500);
+                    } catch (err: any) {
+                      setRegError(`Ocorreu um erro ao salvar: ${err.message || err}`);
+                    }
+                  }}
+                  className="flex-1 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2.5 px-4 rounded-xl shadow-xs transition-all focus:outline-none flex items-center justify-center gap-1.5 cursor-pointer text-center"
+                >
+                  <Check className="w-4 h-4 text-white" />
+                  {editingRegId ? 'Atualizar Região' : 'Criar Região'}
+                </button>
+
+                {editingRegId && (
+                  <button
+                    onClick={() => {
+                      setRegId('');
+                      setRegName('');
+                      setEditingRegId(null);
+                      setRegError(null);
+                    }}
+                    className="bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs py-2.5 px-3 rounded-xl transition-all focus:outline-none cursor-pointer"
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Visualizador de Regiões / Tabela de Regiões (Lado Direito - 8 colunas) */}
+            <div className="lg:col-span-8 space-y-6">
+              
+              {/* VISUALIZADOR GEOGRÁFICO DE REGIOES (INTERATIVO) */}
+              <div className="bg-slate-900 border border-slate-950 rounded-xl p-5 shadow-xs text-white relative overflow-hidden">
+                <div className="absolute top-4 left-4 z-10">
+                  <span className="bg-slate-800 text-rose-400 border border-slate-700 text-[10px] font-bold px-2 py-1 rounded">
+                    SISTEMA DE CORRESPONDÊNCIA TERRESTRE
+                  </span>
+                  <span className="text-[10px] text-slate-400 block mt-1">Clique em qualquer círculo ou ponto luminoso para abrir o modo de edição rápida.</span>
+                </div>
+
+                <div className="absolute top-4 right-4 z-10 flex gap-2 text-[10px] text-slate-400 font-medium">
+                  <div className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span> Sem Carros
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block"></span> Baixo Fluxo
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-405 bg-emerald-400 inline-block"></span> Alta Densidade
+                  </div>
+                </div>
+
+                {/* SVG Visual Map Workspace */}
+                <div className="h-[210px] w-full mt-6 bg-slate-950/45 rounded-lg relative border border-slate-800 flex items-center justify-center">
+                  
+                  {/* Radar Sonar Echoes */}
+                  <svg className="w-full h-full absolute inset-0" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                      <radialGradient id="mapGlow" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.08" />
+                        <stop offset="100%" stopColor="#0f172a" stopOpacity="0" />
+                      </radialGradient>
+                    </defs>
+                    <rect width="100%" height="100%" fill="url(#mapGlow)" />
+                    
+                    {/* Concentric Sonar Circles */}
+                    <circle cx="50%" cy="50%" r="40" stroke="rgba(244, 63, 94, 0.05)" strokeWidth="1" fill="none" />
+                    <circle cx="50%" cy="50%" r="80" stroke="rgba(244, 63, 94, 0.05)" strokeWidth="1" fill="none" />
+                    <circle cx="50%" cy="50%" r="120" stroke="rgba(244, 63, 94, 0.03)" strokeWidth="1" fill="none" />
+                    
+                    {/* Simulated Coordinates Grid */}
+                    <line x1="50%" y1="0" x2="50%" y2="100%" stroke="rgba(255, 255, 255, 0.05)" strokeDasharray="3,3" />
+                    <line x1="0" y1="50%" x2="100%" y2="50%" stroke="rgba(255, 255, 255, 0.05)" strokeDasharray="3,3" />
+
+                    {/* Regional Geography Labels based on Southeastern Brasil */}
+                    <text x="20%" y="25%" fill="rgba(255, 255, 255, 0.2)" fontSize="10" fontWeight="bold" fontFamily="monospace">MINAS GERAIS</text>
+                    <text x="75%" y="45%" fill="rgba(255, 255, 255, 0.25)" fontSize="10" fontWeight="bold" fontFamily="monospace">ESPÍRITO SANTO</text>
+                    <text x="25%" y="85%" fill="rgba(255, 255, 255, 0.15)" fontSize="10" fontWeight="bold" fontFamily="monospace">SÃO PAULO</text>
+                    <text x="45%" y="90%" fill="rgba(255, 255, 255, 0.15)" fontSize="10" fontWeight="bold" fontFamily="monospace">RIO DE JANEIRO</text>
+
+                    {/* Glowing Connections Lines */}
+                    {regions.length > 1 && regions.map((rg, idx) => {
+                      if (idx === 0) return null;
+                      const prevRg = regions[idx - 1];
+                      // Helpers to map coordinates
+                      const getCoordinates = (r: Region) => {
+                        const lookups: { [k: string]: { x: number; y: number } } = {
+                          'GV1': { x: 580, y: 100 },
+                          'GV2': { x: 620, y: 110 },
+                          'GV3': { x: 670, y: 95 },
+                          'ES/MG': { x: 280, y: 80 },
+                          '262': { x: 440, y: 130 },
+                          'Norte': { x: 630, y: 40 },
+                          'Sul': { x: 340, y: 160 }
+                        };
+                        if (lookups[r.id]) return lookups[r.id];
+                        // deterministic positioning mock
+                        const hash = r.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+                        return { x: 150 + (hash % 450), y: 50 + ((hash >> 2) % 130) };
+                      };
+
+                      const ptA = getCoordinates(prevRg);
+                      const ptB = getCoordinates(rg);
+
+                      return (
+                        <line 
+                          key={`line_${prevRg.id}_${rg.id}`}
+                          x1={`${(ptA.x / 8).toFixed(1)}%`} 
+                          y1={`${(ptA.y * 100 / 210).toFixed(1)}%`} 
+                          x2={`${(ptB.x / 8).toFixed(1)}%`} 
+                          y2={`${(ptB.y * 100 / 210).toFixed(1)}%`} 
+                          stroke="rgba(244, 63, 94, 0.08)"
+                          strokeWidth="1.5"
+                        />
+                      );
+                    })}
+
+                    {/* Plots Region Circles */}
+                    {regions.map((r) => {
+                      // Lookup position helper
+                      const getCoordinates = (target: Region) => {
+                        const lookups: { [k: string]: { x: number; y: number } } = {
+                          'GV1': { x: 580, y: 100 },
+                          'GV2': { x: 620, y: 110 },
+                          'GV3': { x: 660, y: 95 },
+                          'ES/MG': { x: 280, y: 80 },
+                          '262': { x: 440, y: 130 },
+                          'Norte': { x: 630, y: 40 },
+                          'Sul': { x: 340, y: 160 }
+                        };
+                        if (lookups[target.id]) return lookups[target.id];
+                        // Map coordinates based on text descriptions to be precise
+                        const d = (target.description || '').toLowerCase();
+                        let rx = 500;
+                        let ry = 110;
+                        if (d.includes('minas')) { rx = 220; ry = 70; }
+                        else if (d.includes('são paulo')) { rx = 150; ry = 180; }
+                        else if (d.includes('rio de janeiro')) { rx = 310; ry = 190; }
+                        else if (d.includes('bahia')) { rx = 720; ry = 50; }
+                        else {
+                          const h = target.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+                          rx = 200 + (h % 400);
+                          ry = 50 + ((h >> 2) % 120);
+                        }
+                        return { x: rx, y: ry };
+                      };
+
+                      const coords = getCoordinates(r);
+                      const percentX = coords.x / 8; // Width fits nice in 800 layout scale
+                      const percentY = coords.y * 100 / 210;
+
+                      // Derive fleet drivers info
+                      const regDrivers = users.filter(u => u.role === UserRole.MOTORISTA && (u as any).region === r.id);
+                      const activeDriversCount = regDrivers.filter(u => u.status === 'active').length;
+
+                      // Glow color depending on drivers activity status
+                      let glowColor = 'rgba(148, 163, 184, 0.4)'; // Grey slate empty
+                      let pulseGlow = 'rgba(148, 163, 184, 0.2)';
+                      let mainHex = '#64748b';
+                      if (activeDriversCount > 0) {
+                        if (activeDriversCount >= 3) {
+                          glowColor = 'rgba(16, 185, 129, 0.7)'; // Emerald high flow
+                          pulseGlow = 'rgba(16, 185, 129, 0.3)';
+                          mainHex = '#10b981';
+                        } else {
+                          glowColor = 'rgba(34, 211, 238, 0.7)'; // Cyan low flow
+                          pulseGlow = 'rgba(34, 211, 238, 0.3)';
+                          mainHex = '#22d3ee';
+                        }
+                      }
+
+                      return (
+                        <g 
+                          key={`svg_node_${r.id}`}
+                          className="cursor-pointer group select-none transition-transform hover:scale-110"
+                          onClick={() => {
+                            setRegId(r.id);
+                            setRegName(r.name);
+                            setEditingRegId(r.id);
+                            setRegError(null);
+                            setRegLat(r.lat !== undefined ? r.lat : -18.85);
+                            setRegLng(r.lng !== undefined ? r.lng : -41.94);
+                            setRegRadius(r.radius !== undefined ? r.radius : 1500);
+                            // Detect state
+                            if (r.description?.includes('Minas Gerais')) setRegState('Minas Gerais');
+                            else if (r.description?.includes('Rio de Janeiro')) setRegState('Rio de Janeiro');
+                            else if (r.description?.includes('São Paulo')) setRegState('São Paulo');
+                            else if (r.description?.includes('Bahia')) setRegState('Bahia');
+                            else if (r.description?.includes('Paraná')) setRegState('Paraná');
+                            else setRegState('Espírito Santo');
+                          }}
+                        >
+                          {/* Pulsing Signal Wave */}
+                          {activeDriversCount > 0 && (
+                            <circle 
+                              cx={`${percentX}%`} 
+                              cy={`${percentY}%`} 
+                              r="15" 
+                              fill="none" 
+                              stroke={pulseGlow} 
+                              strokeWidth="3"
+                              className="animate-ping"
+                              style={{ transformOrigin: `${percentX}% ${percentY}%` }}
+                            />
+                          )}
+
+                          {/* Glow drop-shadow circle overlay */}
+                          <circle 
+                            cx={`${percentX}%`} 
+                            cy={`${percentY}%`} 
+                            r="8" 
+                            fill={glowColor}
+                            className="group-hover:r-[10px] transition-all duration-300"
+                          />
+
+                          {/* Solid Core Pointer */}
+                          <circle 
+                            cx={`${percentX}%`} 
+                            cy={`${percentY}%`} 
+                            r="4.5" 
+                            fill="#FFFFFF" 
+                            stroke={mainHex}
+                            strokeWidth="1.5"
+                          />
+
+                          {/* Text Code Label tag */}
+                          <text 
+                            x={`${percentX}%`} 
+                            y={`${percentY - 11}%`} 
+                            textAnchor="middle" 
+                            fill={mainHex}
+                            fontSize="9" 
+                            fontWeight="bold"
+                            className="bg-slate-900 px-1 py-0.5 rounded font-mono"
+                          >
+                            {r.id} ({activeDriversCount}🏎️)
+                          </text>
+
+                          {/* Invisible tooltip zone */}
+                          <title>
+                            Região: {r.name}&#10;
+                            Território: {r.description || 'Nenhum definido'}&#10;
+                            Total de Condutores: {regDrivers.length}&#10;
+                            Motoristas Ativos Reducionais: {activeDriversCount}
+                          </title>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+              </div>
+
+              {/* Tabela de Regiões de Atuação */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                <div className="bg-slate-50 p-3.5 border-b border-slate-200 text-xs font-bold text-slate-700 flex justify-between items-center">
+                  <span>Malha de Cobertura de Filiais Ativas ({regions.length})</span>
+                  <span className="text-[10px] text-slate-400 font-mono">Clique em editar para atualizar instantaneamente</span>
+                </div>
+                
+                <div className="divide-y divide-slate-150 max-h-[280px] overflow-y-auto bg-white">
+                  {regions.map((r) => {
+                    const regDrivers = users.filter(u => u.role === UserRole.MOTORISTA && (u as any).region === r.id);
+                    const activeDrivers = regDrivers.filter(u => u.status === 'active');
+                    const isSelected = editingRegId === r.id;
+
+                    return (
+                      <div 
+                        key={r.id} 
+                        className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50 transition-all ${isSelected ? 'bg-amber-50/40 border-l-4 border-l-amber-500' : ''}`}
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[11px] font-black bg-slate-900 border border-slate-950 text-white px-2 py-0.5 rounded">
+                              {r.id}
+                            </span>
+                            <span className="font-bold text-slate-800 text-xs">
+                              {r.name}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            {r.description || 'Sem descrição territorial adicional'}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-4.5">
+                          {/* Mini Indicador de Densidade de Frota */}
+                          <div className="text-right shrink-0">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block">Frota Operacional</span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-xs font-black text-slate-750">{activeDrivers.length} / {regDrivers.length}</span>
+                              <div className="w-14 bg-slate-100 h-1.5 rounded-full overflow-hidden block">
+                                <div 
+                                  className="h-full bg-rose-600 rounded-full" 
+                                  style={{ width: `${Math.min(100, regDrivers.length > 0 ? (activeDrivers.length / regDrivers.length) * 100 : 0)}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => {
+                                setRegId(r.id);
+                                setRegName(r.name);
+                                setEditingRegId(r.id);
+                                setRegError(null);
+                                // Detect state from description
+                                if (r.description?.includes('Minas Gerais')) setRegState('Minas Gerais');
+                                else if (r.description?.includes('Rio de Janeiro')) setRegState('Rio de Janeiro');
+                                else if (r.description?.includes('São Paulo')) setRegState('São Paulo');
+                                else if (r.description?.includes('Bahia')) setRegState('Bahia');
+                                else if (r.description?.includes('Paraná')) setRegState('Paraná');
+                                else setRegState('Espírito Santo');
+                              }}
+                              className="p-1.5 px-2.5 text-[11px] font-bold text-slate-600 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 rounded-lg transition-all flex items-center gap-1 cursor-pointer bg-white shadow-xs"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Editar
+                            </button>
+                            <button
+                              onClick={async () => {
+                                if (confirm(`Deseja mesmo excluir a região "${r.id} - ${r.name}"? Motoristas associados a ela ficarão desprovidos de base.`)) {
+                                  await onDeleteRegion(r.id);
+                                  setRegSuccess(`Sucesso: Região "${r.id}" removida.`);
+                                  setTimeout(() => setRegSuccess(null), 3000);
+                                  // Clear editing if deleted
+                                  if (editingRegId === r.id) {
+                                    setRegId('');
+                                    setRegName('');
+                                    setEditingRegId(null);
+                                  }
+                                }
+                              }}
+                              className="p-1.5 px-2 text-[11px] font-bold text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-150 hover:border-transparent rounded-lg transition-all cursor-pointer bg-white"
+                              title="Excluir região"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* HISTÓRICO RIGOROSO DE ALTERAÇÕES DE REGIÕES (RASTRO DE AUDITORIA FORENSE) */}
+              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+                <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-rose-600" />
+                    Histórico de Alterações de Regiões (Auditoria Geral)
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">Imutável</span>
+                </div>
+
+                <div className="p-4 max-h-[220px] overflow-y-auto space-y-3">
+                  {auditLogs.filter(log => 
+                    log.action?.includes('Região') || 
+                    log.targetUserId?.startsWith('region_') || 
+                    log.details?.toLowerCase().includes('região')
+                  ).length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-4 font-mono">Nenhuma alteração registrada em auditoria nesta sessão.</p>
+                  ) : (
+                    auditLogs.filter(log => 
+                      log.action?.includes('Região') || 
+                      log.targetUserId?.startsWith('region_') || 
+                      log.details?.toLowerCase().includes('região')
+                    ).map(log => {
+                      // Decorate based on action
+                      let badgeStyle = 'bg-rose-55 bg-rose-50 text-rose-700 border-rose-200';
+                      if (log.action?.includes('Alterada')) {
+                        badgeStyle = 'bg-amber-50 text-amber-700 border-amber-200';
+                      } else if (log.action?.includes('Criada')) {
+                        badgeStyle = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                      }
+
+                      return (
+                        <div key={log.id} className="p-3 border border-slate-100 rounded-lg text-xs hover:border-rose-100 transition-all bg-slate-50/50">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`px-2 py-0.5 border text-[9px] font-bold uppercase rounded ${badgeStyle}`}>
+                                {log.action}
+                              </span>
+                              <span className="text-[10px] text-slate-405 font-mono">
+                                {new Date(log.timestamp).toLocaleTimeString('pt-BR')} do dia {new Date(log.timestamp).toLocaleDateString('pt-BR')}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-slate-400">Admin: <strong>{log.adminName}</strong></span>
+                          </div>
+                          <p className="text-slate-700 font-medium font-sans leading-relaxed">{log.details}</p>
+                          <div className="text-[10px] text-slate-450 mt-1 block font-mono">
+                            Código Alvo: <span className="text-slate-800 font-semibold">{log.targetUserId.replace('region_', '')}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
         </div>
       )}
 
@@ -1349,6 +2514,7 @@ interface GerenteProps {
   performanceLogs: RoutePerformanceLog[];
   pushLogs: PushDeliveryLog[];
   pushConfig: PushConfig;
+  regions: Region[];
   onPostMessage: (text: string, audioUrl?: string) => void;
   onPush: (title: string, body: string, region: string) => void;
   onSendPush: (
@@ -1363,6 +2529,8 @@ interface GerenteProps {
   onDeleteRoute: (id: string) => void;
   onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
   onStartRoute: (id: string) => void;
+  isDemoSimulationActive?: boolean;
+  setIsDemoSimulationActive?: (active: boolean) => void;
 }
 
 export function GerenteDashboard({ 
@@ -1376,6 +2544,7 @@ export function GerenteDashboard({
   performanceLogs, 
   pushLogs, 
   pushConfig, 
+  regions,
   onPostMessage, 
   onPush, 
   onSendPush,
@@ -1383,11 +2552,69 @@ export function GerenteDashboard({
   onUpdateRoute,
   onDeleteRoute,
   onOptimize,
-  onStartRoute
+  onStartRoute,
+  isDemoSimulationActive = false,
+  setIsDemoSimulationActive
 }: GerenteProps) {
   const [chatInput, setChatInput] = useState('');
   const [activeTab, setActiveTab] = useState<'map' | 'routes' | 'chat' | 'push_config' | 'analytics' | 'clientes'>('map');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isImporterOpen, setIsImporterOpen] = useState(false);
+  const [isSupabaseHelpOpen, setIsSupabaseHelpOpen] = useState(false);
+
+  // Dynamic universal search categories matching
+  const searchResults = useMemo(() => {
+    if (!searchTerm || searchTerm.trim().length < 2) return null;
+    const term = searchTerm.toLowerCase().trim();
+
+    // 1. Matches Drivers in Region
+    const region = (user as any).region || 'GV1';
+    const drivers = users
+      .filter(u => u.role === UserRole.MOTORISTA && (u as any).region === region && (
+        u.name.toLowerCase().includes(term) ||
+        u.email.toLowerCase().includes(term) ||
+        (u as any).plate?.toLowerCase().includes(term)
+      ))
+      .slice(0, 4);
+
+    // 2. Matches Routes within Region
+    const matchedRoutes = rotas
+      .filter(r => r.region === region && (
+        r.name.toLowerCase().includes(term) ||
+        r.driverName.toLowerCase().includes(term)
+      ))
+      .slice(0, 4);
+
+    // 3. Matches Clients within Region
+    const matchedClients: { clientName: string; address: string; routeName: string; whatsApp?: string }[] = [];
+    rotas
+      .filter(r => r.region === region)
+      .forEach(r => {
+        r.stops.forEach(st => {
+          if (
+            st.clientName.toLowerCase().includes(term) ||
+            st.address.toLowerCase().includes(term) ||
+            (st.clientWhatsApp && st.clientWhatsApp.includes(term))
+          ) {
+            if (!matchedClients.some(c => c.clientName === st.clientName)) {
+              matchedClients.push({
+                clientName: st.clientName,
+                address: st.address,
+                routeName: r.name,
+                whatsApp: st.clientWhatsApp
+              });
+            }
+          }
+        });
+      });
+
+    return {
+      drivers,
+      routes: matchedRoutes,
+      clients: matchedClients.slice(0, 4)
+    };
+  }, [searchTerm, users, rotas, user]);
   
   // Tutorial and Dynamic Route Filters States
   const [showTutorial, setShowTutorial] = useState(false);
@@ -1407,16 +2634,16 @@ export function GerenteDashboard({
 
   // NEW: Route Builder States inside Gerente "Clientes" tab
   const [gRouteName, setGRouteName] = useState('Rota Corporativa ' + new Date().toLocaleDateString('pt-BR'));
-  const [gOrigin, setGOrigin] = useState('CD Central ' + region + ' - BR-116, Km 410');
-  const [gOriginLat, setGOriginLat] = useState(-18.845);
-  const [gOriginLng, setGOriginLng] = useState(-41.945);
+  const [gOrigin, setGOrigin] = useState('CD Central ' + region + ' - Av. Dos Camras, 513,Santo Antonio - Cariacica-ES');
+  const [gOriginLat, setGOriginLat] = useState(-20.302534);
+  const [gOriginLng, setGOriginLng] = useState(-40.401630);
   const [gSelectedDriverId, setGSelectedDriverId] = useState('');
   const [gStops, setGStops] = useState<Parada[]>([]);
   const [gClientName, setGClientName] = useState('');
   const [gClientWhatsApp, setGClientWhatsApp] = useState('');
   const [gClientAddress, setGClientAddress] = useState('');
-  const [gCustomLat, setGCustomLat] = useState<number>(-18.85);
-  const [gCustomLng, setGCustomLng] = useState<number>(-41.95);
+  const [gCustomLat, setGCustomLat] = useState<number>(-20.302534);
+  const [gCustomLng, setGCustomLng] = useState<number>(-40.401630);
   const [gAddressPredictions, setGAddressPredictions] = useState<{ description: string; placeId: string }[]>([]);
   const [gIsValidating, setGIsValidating] = useState(false);
   const [gIsValidated, setGIsValidated] = useState(false);
@@ -1660,6 +2887,52 @@ export function GerenteDashboard({
     'Média Minutos/Parada': p.averageTimePerStopMinutes || 15
   }));
 
+  const driverPerformanceChartData = useMemo(() => {
+    const driverGroup: Record<string, { totalDuration: number; durationCount: number; totalEfficiency: number; count: number }> = {};
+    const logsToProcess = regionalPerformance.length > 0 ? regionalPerformance : [];
+
+    logsToProcess.forEach(p => {
+      const drv = p.driverName || 'Motorista';
+      if (!driverGroup[drv]) {
+        driverGroup[drv] = { totalDuration: 0, durationCount: 0, totalEfficiency: 0, count: 0 };
+      }
+      
+      let durationMins = 0;
+      if (p.startTimestamp && p.endTimestamp) {
+        durationMins = (new Date(p.endTimestamp).getTime() - new Date(p.startTimestamp).getTime()) / (1000 * 60);
+      } else if (p.startTimestamp) {
+        durationMins = 120 + (p.averageTimePerStopMinutes || 15) * p.completedStopsCount;
+      } else {
+        durationMins = 90;
+      }
+      
+      const stopProgress = p.completedStopsCount / Math.max(p.plannedStopsCount, 1);
+      const distRatio = p.plannedDistanceKm / Math.max(p.actualDistanceKm, p.plannedDistanceKm, 0.1);
+      const deviationPenalty = p.routeDeviations * 4;
+      const efficiencyScore = Math.max(40, Math.min(100, Math.round((stopProgress * 70) + (distRatio * 30) - deviationPenalty)));
+      
+      driverGroup[drv].totalDuration += durationMins;
+      driverGroup[drv].durationCount += 1;
+      driverGroup[drv].totalEfficiency += efficiencyScore;
+      driverGroup[drv].count += 1;
+    });
+
+    const result = Object.entries(driverGroup).map(([driver, g]) => ({
+      name: driver,
+      'Tempo de Conclusão Médio (m)': Math.round(g.totalDuration / Math.max(g.durationCount, 1)),
+      'Eficiência (%)': Math.round(g.totalEfficiency / g.count)
+    }));
+
+    if (result.length === 0) {
+      return [
+        { name: 'Ana Silva', 'Tempo de Conclusão Médio (m)': 85, 'Eficiência (%)': 94 },
+        { name: 'Carlos Antunes', 'Tempo de Conclusão Médio (m)': 110, 'Eficiência (%)': 88 },
+        { name: 'Marcos Rezende', 'Tempo de Conclusão Médio (m)': 95, 'Eficiência (%)': 91 },
+      ];
+    }
+    return result;
+  }, [regionalPerformance]);
+
   return (
     <div id="gerente-main-panel" className="flex flex-col gap-5 select-text w-full">
       
@@ -1681,16 +2954,109 @@ export function GerenteDashboard({
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start md:self-center">
+          <div className="flex flex-wrap items-center gap-2 self-start md:self-center">
             <button
-              type="button"
-              onClick={() => setShowTutorial(true)}
-              className="bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-slate-700 px-3 py-1.5 text-xs rounded-xl flex items-center gap-1 font-bold cursor-pointer transition-all"
-              title="Abrir guia interativo explicativo regional"
-            >
-              <HelpCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-              <span>Guia Regional</span>
-            </button>
+               type="button"
+               onClick={() => setShowTutorial(true)}
+               className="bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-slate-700 px-3 py-1.5 text-xs rounded-xl flex items-center gap-1 font-bold cursor-pointer transition-all"
+               title="Abrir guia interativo explicativo regional"
+             >
+               <HelpCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+               <span>Guia Regional</span>
+             </button>
+
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Buscar rotas, motoristas..."
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+                className="bg-slate-50 border border-slate-300 text-slate-800 p-2 text-xs rounded-xl placeholder-slate-400 w-[180px] focus:outline-none focus:border-blue-500 font-sans shadow-sm"
+              />
+              {searchResults && (
+                <div className="absolute right-0 top-full mt-2 w-[320px] md:w-[465px] bg-white border border-slate-200 shadow-2xl rounded-2xl p-4.5 z-50 overflow-y-auto max-h-[380px] space-y-4 text-slate-800 text-left border-t-8 border-t-blue-600">
+                  <div className="flex items-center justify-between border-b pb-2 select-none">
+                    <span className="font-extrabold text-[10px] text-slate-400 uppercase tracking-widest">Busca Logística ({region})</span>
+                    <button 
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded font-black uppercase"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+
+                  {searchResults.drivers.length === 0 && searchResults.routes.length === 0 && searchResults.clients.length === 0 ? (
+                    <div className="text-center py-6 text-slate-400 font-medium font-sans">Nenhum registro correspondente encontrado para "{searchTerm}"</div>
+                  ) : (
+                    <div className="space-y-4 font-sans">
+                      {/* Drivers category */}
+                      {searchResults.drivers.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Motoristas Regionais 👀</span>
+                          <div className="space-y-1">
+                            {searchResults.drivers.map(drv => (
+                              <div key={drv.id} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between transition-all hover:bg-slate-100/50">
+                                <div>
+                                  <strong className="block text-slate-850 text-xs font-semibold">{drv.name}</strong>
+                                  <span className="text-[10px] text-slate-400 block mt-0.5 font-sans">E-mail: {drv.email} {(drv as any).region ? `| Região: ${(drv as any).region}` : ''}</span>
+                                </div>
+                                <span className="bg-blue-50 border border-blue-150 text-blue-700 font-mono text-[9px] font-black uppercase px-2 py-0.5 rounded shrink-0">
+                                  Placa: {(drv as any).plate || 'RTL-1234'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Routes category */}
+                      {searchResults.routes.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Rotas Isoladas 📦</span>
+                          <div className="space-y-1">
+                            {searchResults.routes.map(rt => (
+                              <div key={rt.id} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between transition-all hover:bg-slate-100/50 font-sans">
+                                <div className="min-w-0 pr-2">
+                                  <strong className="block text-slate-850 text-xs font-semibold truncate">{rt.name}</strong>
+                                  <span className="text-[10px] text-slate-400 block mt-0.5 truncate">Origem: {rt.origin} | Região: {rt.region}</span>
+                                </div>
+                                <span className={`font-mono text-[8px] text-white font-black uppercase px-2 py-0.5 rounded shrink-0 ${
+                                  rt.status === 'completed' ? 'bg-emerald-500' : rt.status === 'active' ? 'bg-blue-500 animate-pulse' : 'bg-slate-400'
+                                }`}>
+                                  {rt.status}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Clients category */}
+                      {searchResults.clients.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Clientes / Destinatários Regional 👤</span>
+                          <div className="space-y-1">
+                            {searchResults.clients.map((cl, cidx) => (
+                              <div key={cidx} className="p-2.5 bg-slate-50 border border-slate-150 rounded-xl transition-all hover:bg-slate-100/50 font-sans">
+                                <div className="flex items-center justify-between pr-1 gap-2">
+                                  <strong className="text-slate-850 text-xs font-semibold truncate">{cl.clientName}</strong>
+                                  {cl.whatsApp && <span className="text-[9px] font-mono font-bold text-emerald-600 shrink-0">💬 {cl.whatsApp}</span>}
+                                </div>
+                                <p className="text-[10px] text-slate-400 line-clamp-1 mt-0.5">{cl.address}</p>
+                                <span className="text-[8px] text-slate-500 bg-slate-200/60 inline-block mt-1 px-1.5 py-0.5 rounded font-mono font-bold leading-none select-none">
+                                  Rota associada: {cl.routeName}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-100 text-emerald-700 text-[11px] font-medium font-mono">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -1852,6 +3218,23 @@ export function GerenteDashboard({
               ) : activeTab === 'routes' ? (
                 // Active driver and route list layout with full regional detail
                 <div className="space-y-4">
+                  {/* TOP ACTION BAR: NEW ROUTE & CSV IMPORT */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-100 rounded-2xl p-4.5 shadow-sm">
+                    <div>
+                      <h4 className="font-extrabold text-[11px] text-indigo-950 uppercase tracking-widest font-mono">Painel de Planejamento Regional ({region})</h4>
+                      <p className="text-[10.5px] text-indigo-800 font-sans mt-0.5 font-medium leading-relaxed">Importe planilhas de faturamento para roteamento de paradas e despacho das frotas.</p>
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => setIsImporterOpen(true)}
+                      className="px-4.5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-1.5 text-xs select-none cursor-pointer uppercase tracking-wider self-start sm:self-center font-sans"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-white" />
+                      <span>Importar Clientes (CSV/Excel)</span>
+                    </button>
+                  </div>
+
                   {/* Dynamic Fleet Filter bar widget */}
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-3 shadow-xs">
                     <div className="flex items-center justify-between border-b border-slate-150 pb-2">
@@ -2064,6 +3447,236 @@ export function GerenteDashboard({
           {activeTab === 'map' ? (
             // Tab 1: GIS Regional Dashboard Monitor
             <div className="flex flex-col flex-1 h-full min-h-[420px]">
+              
+              {/* Performance Summary Dashboard Widget */}
+              <div id="performance-summary-widget" className="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-950 border border-slate-800 text-white rounded-2xl p-4 md:p-5 mb-4 shadow-xl relative overflow-hidden">
+                {/* Background accent glow */}
+                <div className="absolute right-0 top-0 w-48 h-48 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
+                
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4 mb-4 select-none relative z-10">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="p-1 px-2.5 bg-blue-500/10 text-blue-400 text-[9px] rounded-full uppercase tracking-widest font-bold border border-blue-500/25 font-mono">Painel de Performance</span>
+                      <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">• Região {region}</span>
+                    </div>
+                    <h3 className="font-sans font-bold text-base md:text-lg text-slate-100 tracking-tight mt-1 flex items-center gap-2">
+                      <TrendingUp className="w-4.5 h-4.5 text-blue-400" />
+                      Performance Summary
+                    </h3>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* Database Setup Button */}
+                    <button
+                      type="button"
+                      onClick={() => setIsSupabaseHelpOpen(true)}
+                      className="px-3.5 py-1.5 bg-indigo-600/95 hover:bg-indigo-650 text-[10.5px] font-extrabold text-blue-100 rounded-xl transition-all flex items-center gap-1.5 border border-indigo-500/30 cursor-pointer shadow-md shadow-indigo-950/40 uppercase tracking-wider active:scale-95"
+                    >
+                      <Settings className="w-3.5 h-3.5 text-indigo-300 animate-spin-slow" />
+                      <span>Configurar Supabase</span>
+                    </button>
+
+                    {/* CSV Export Button */}
+                    <button
+                      type="button"
+                      onClick={() => exportToCSV(regionalPerformance, `performance_summary_${region}.csv`)}
+                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-[10.5px] font-extrabold text-white rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-blue-950/40 border border-blue-500/30 cursor-pointer uppercase tracking-wider active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5 text-slate-200" />
+                      <span>Exportar CSV</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Metrics and Chart Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 relative z-10">
+                  
+                  {/* Left Column: Core KPIs */}
+                  <div className="lg:col-span-4 flex flex-col justify-between gap-3 font-sans">
+                    <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl flex items-center justify-between shadow-xs">
+                      <div>
+                        <span className="text-[9.5px] text-slate-400 font-bold uppercase tracking-wider font-mono">Taxa de Sucesso Comercial</span>
+                        <h4 className="text-xl md:text-2xl font-black text-slate-100">{
+                          regionalPerformance.reduce((acc, p) => acc + (p.plannedStopsCount || 0), 0) > 0
+                            ? Math.round((regionalPerformance.reduce((acc, p) => acc + (p.completedStopsCount || 0), 0) / regionalPerformance.reduce((acc, p) => acc + (p.plannedStopsCount || 0), 0)) * 100)
+                            : 100
+                        }%</h4>
+                        <p className="text-[9px] text-slate-450 mt-0.5 leading-tight">Entregas concluídas vs. agendadas.</p>
+                      </div>
+                      <div className="p-2 py-1.5 bg-slate-850 border border-slate-800 rounded-lg text-emerald-400 font-bold text-xs uppercase font-mono shadow-inner">
+                        {regionalPerformance.reduce((acc, p) => acc + (p.completedStopsCount || 0), 0)} paradas
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl flex items-center justify-between shadow-xs">
+                      <div>
+                        <span className="text-[9.5px] text-slate-400 font-bold uppercase tracking-wider font-mono">Eficiência Média da Frota</span>
+                        <h4 className="text-xl md:text-2xl font-black text-slate-100">{
+                          regionalPerformance.length > 0 
+                            ? Math.round(regionalPerformance.reduce((acc, p) => acc + Math.min(100, Math.round(((p.plannedDistanceKm || 50) / Math.max(1, p.actualDistanceKm || 50)) * 100)), 0) / regionalPerformance.length)
+                            : 88
+                        }%</h4>
+                        <p className="text-[9px] text-slate-450 mt-0.5 leading-tight">Kms planejados vs. desvios percorridos.</p>
+                      </div>
+                      <div className="p-2 py-1.5 bg-slate-850 border border-slate-800 rounded-lg text-blue-400 font-bold text-xs uppercase font-mono shadow-inner">
+                        {statsSummary.totalKm} kms
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/60 border border-slate-800 p-3 rounded-xl flex items-center justify-between shadow-xs">
+                      <div>
+                        <span className="text-[9.5px] text-slate-400 font-bold uppercase tracking-wider font-mono">Alertas e Desvios de Rota</span>
+                        <h4 className="text-xl md:text-2xl font-black text-amber-500">{statsSummary.totalDeviations} <span className="text-xs text-slate-450 font-normal">ocorrências</span></h4>
+                        <p className="text-[9px] text-slate-450 mt-0.5 leading-tight">Telemetria detectou desvios em tempo real.</p>
+                      </div>
+                      <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-lg">
+                        <AlertTriangle className="w-4 h-4" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: High Fidelity Recharts Chart */}
+                  <div className="lg:col-span-8 bg-slate-900/40 border border-slate-800 p-3 rounded-xl min-h-[160px] flex flex-col justify-between">
+                    <span className="text-[9.5px] text-slate-400 font-bold uppercase tracking-wider block font-mono border-b border-slate-800 pb-1.5 mb-1.5">Eficiência por Rota Ativa/Finalizada (%)</span>
+                    
+                    <div className="w-full h-[120px] text-xs font-mono">
+                      {regionalPerformance.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-slate-500 text-xs italic">
+                          Nenhum dado de frete na região para preencher o gráfico.
+                        </div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart
+                            data={regionalPerformance.map(p => {
+                              const planned = p.plannedDistanceKm || 50;
+                              const actual = p.actualDistanceKm || 50;
+                              const efficiency = Math.min(100, Math.round((planned / Math.max(1, actual)) * 100));
+                              const stopsRatio = p.plannedStopsCount > 0 
+                                ? Math.round((p.completedStopsCount / p.plannedStopsCount) * 100) 
+                                : 100;
+                              return {
+                                name: p.routeName.replace('Rota ', 'R-'),
+                                'Eficiência %': efficiency,
+                                'Sucesso %': stopsRatio,
+                              };
+                            })}
+                            margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
+                          >
+                            <defs>
+                              <linearGradient id="colorEff" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.25}/>
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                              </linearGradient>
+                              <linearGradient id="colorSuc" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.25}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                            <XAxis dataKey="name" stroke="#64748b" fontSize={9} tickLine={false} />
+                            <YAxis stroke="#64748b" fontSize={9} tickLine={false} domain={[0, 100]} />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px', color: '#f8fafc', fontSize: '10.5px' }}
+                              labelStyle={{ fontWeight: 'bold', color: '#94a3b8' }}
+                            />
+                            <Area type="monotone" dataKey="Eficiência %" stroke="#3b82f6" strokeWidth={2} fillOpacity={1} fill="url(#colorEff)" />
+                            <Area type="monotone" dataKey="Sucesso %" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorSuc)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Supabase Technical Setup Helper Modal panel */}
+              <AnimatePresence>
+                {isSupabaseHelpOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 z-50 overflow-y-auto select-text font-sans"
+                  >
+                    <motion.div 
+                      initial={{ scale: 0.95, y: 15 }}
+                      animate={{ scale: 1, y: 0 }}
+                      exit={{ scale: 0.95, y: 15 }}
+                      className="bg-slate-900 border border-slate-800 text-slate-100 rounded-3xl w-full max-w-4xl p-6 shadow-2xl relative flex flex-col max-h-[85vh] overflow-hidden"
+                    >
+                      <button 
+                        type="button"
+                        onClick={() => setIsSupabaseHelpOpen(false)}
+                        className="absolute top-5 right-5 p-2 bg-slate-850 hover:bg-slate-800 border border-slate-800 rounded-xl text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+
+                      <div className="flex items-center gap-2.5 mb-3 border-b border-slate-800 pb-3">
+                        <div className="p-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl">
+                          <Settings className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-base font-extrabold text-slate-100 uppercase tracking-tight">Supabase Setup Guide & DDL Bootstrap</h3>
+                          <p className="text-[11px] text-slate-400 mt-0.5">Siga os passos abaixo para transferir o RouteLog de Offline Sandbox para seu banco PostgreSQL dedicado em segundos.</p>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto pr-1 space-y-4 text-xs leading-relaxed text-slate-300">
+                        <div>
+                          <h4 className="font-extrabold text-[11px] text-indigo-400 uppercase tracking-wider font-mono mb-1.5 flex items-center gap-1.5">
+                            <span className="w-5 h-5 bg-indigo-500/10 text-indigo-400 text-[10px] rounded-full flex items-center justify-center font-mono">1</span>
+                            Configurar arquivo local .env
+                          </h4>
+                          <p className="mb-2">Copie e cole as chaves da API do cliente Supabase e declare-as no seu arquivo <code className="bg-slate-950 p-1 rounded border border-slate-850 font-mono text-pink-400 text-[10.5px]">.env</code> no diretório raiz do projeto:</p>
+                          <pre className="bg-slate-950 p-3 rounded-2xl border border-slate-850 font-mono text-[11px] text-amber-300 overflow-x-auto whitespace-pre">VITE_SUPABASE_URL=https://seu-projeto.supabase.co&#10;VITE_SUPABASE_ANON_KEY=seu_anon_token_copiado_do_painel</pre>
+                        </div>
+
+                        <div>
+                          <h4 className="font-extrabold text-[11px] text-indigo-400 uppercase tracking-wider font-mono mb-1.5 flex items-center gap-1.5">
+                            <span className="w-5 h-5 bg-indigo-500/10 text-indigo-400 text-[10px] rounded-full flex items-center justify-center font-mono">2</span>
+                            Criar Tabelas no Banco PostgreSQL do Supabase
+                          </h4>
+                          <p className="mb-2">Navegue até a seção <strong>SQL Editor</strong> do painel do seu projeto Supabase, crie um novo script de consulta (New query), cole o SQL DDL fornecido abaixo e clique em <strong>Run</strong>:</p>
+                          
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(SUPABASE_SQL_DDL);
+                                alert('SQL Script copiado para a Área de Transferência!');
+                              }}
+                              className="absolute right-3 top-3 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-lg text-[9px] transition-all uppercase tracking-wider cursor-pointer"
+                            >
+                              Copiar Código SQL
+                            </button>
+                            <pre className="bg-slate-950 p-3.5 pt-10 rounded-2xl border border-slate-850 font-mono text-[10px] text-emerald-300 overflow-x-auto max-h-[180px] overflow-y-auto whitespace-pre leading-normal select-all">
+                              {SUPABASE_SQL_DDL}
+                            </pre>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-950/40 border border-slate-800 p-3 rounded-xl">
+                          <h4 className="font-extrabold text-[11px] text-indigo-400 uppercase tracking-wider font-mono mb-1">🔥 Por que este design é robusto?</h4>
+                          <p className="text-[11px] text-slate-400">O RouteLog adota um modelo híbrido com controle offline inteligente. Na ausência de chaves de ambiente, ele salva dados no ReactiveLocalStorage e atualiza seu monitor em tempo real sem interrupções. No momento em que você preenche o seu arquivo <code className="bg-slate-950 px-1 rounded font-mono text-pink-400">.env</code> com dados do Supabase, o sistema migra automaticamente para o banco PostgreSQL online e canais de sincronização real-time!</p>
+                        </div>
+                      </div>
+
+                      <div className="border-t border-slate-800 pt-3.5 mt-3 flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400 font-mono">RouteLog Enterprise Database Module</span>
+                        <button
+                          type="button"
+                          onClick={() => setIsSupabaseHelpOpen(false)}
+                          className="px-5 py-2 bg-slate-800 hover:bg-slate-750 text-white font-extrabold rounded-xl transition-all cursor-pointer text-xs uppercase"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <div className="flex items-center justify-between mb-3 select-none">
                 <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">Modo de Exibição do Monitor:</span>
                 <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
@@ -2101,6 +3714,7 @@ export function GerenteDashboard({
                     currentUserRegion={region}
                     currentUserRole={user.role}
                     breadcrumbs={breadcrumbs}
+                    regions={regions}
                   />
                 )}
               </div>
@@ -2248,7 +3862,7 @@ export function GerenteDashboard({
               {/* High-fidelity Recharts visual boards */}
               {regionalPerformance.length > 0 ? (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {/* Graph A: planned vs actual distance comparison */}
                     <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
                       <span className="text-[10px] font-bold text-slate-500 block uppercase tracking-wider mb-2 font-mono">
@@ -2285,6 +3899,27 @@ export function GerenteDashboard({
                             <Area type="monotone" dataKey="Média Minutos/Parada" stroke="#a855f7" fill="#f3e8ff" />
                             <Area type="monotone" dataKey="Desvios Detectados" stroke="#ef4444" fill="#fee2e2" />
                           </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    {/* Graph C: driver average completion time & efficiency dual axis */}
+                    <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 md:col-span-2 lg:col-span-1 animate-fadeIn">
+                      <span className="text-[10px] font-bold text-slate-500 block uppercase tracking-wider mb-2 font-mono">
+                        EFICIÊNCIA & TEMPO DE CONCLUSÃO POR MOTORISTA
+                      </span>
+                      <div className="h-44 text-[10px] font-mono">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={driverPerformanceChartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                            <XAxis dataKey="name" stroke="#64748b" />
+                            <YAxis yAxisId="left" stroke="#3b82f6" unit="m" />
+                            <YAxis yAxisId="right" orientation="right" stroke="#10b981" unit="%" domain={[0, 100]} />
+                            <Tooltip />
+                            <Legend wrapperStyle={{ fontSize: 9 }} />
+                            <Bar yAxisId="left" dataKey="Tempo de Conclusão Médio (m)" fill="#4f46e5" radius={[4, 4, 0, 0]} />
+                            <Line yAxisId="right" type="monotone" dataKey="Eficiência (%)" stroke="#10b981" strokeWidth={2.5} activeDot={{ r: 6 }} />
+                          </ComposedChart>
                         </ResponsiveContainer>
                       </div>
                     </div>
@@ -2660,7 +4295,7 @@ export function GerenteDashboard({
 
                           // Reset Creator
                           setGRouteName('Rota Corporativa ' + new Date().toLocaleDateString('pt-BR'));
-                          setGOrigin('CD Central ' + region + ' - BR-116, Km 410');
+                          setGOrigin('CD Central ' + region + ' - Av. dos Camaras,513, Santo Antonio, cariacica-ES');
                           setGSelectedDriverId('');
                           setGStops([]);
                         }}
@@ -2859,13 +4494,47 @@ export function GerenteDashboard({
                 </div>
               </div>
 
-              {/* Secure Excel / CSV Client Importer wizard segment */}
-              <ClientImporter 
-                currentRegion={region}
-                onImportStops={(stops) => {
-                  setGStops(prev => [...prev, ...stops]);
-                }}
-              />
+              {/* FULL-SCREEN SECURE CLIENT IMPORTER MODAL */}
+              {isImporterOpen && (
+                <div id="client-importer-modal-v3" className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[99999] overflow-y-auto leading-normal">
+                  <div className="bg-white rounded-3xl border border-slate-250 shadow-2xl w-full max-w-5xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                    {/* Modal Header */}
+                    <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between select-none">
+                      <div className="flex items-center gap-2">
+                        <FileSpreadsheet className="w-5 h-5 text-indigo-400" />
+                        <div>
+                          <h3 className="font-extrabold text-[12px] uppercase tracking-wider font-mono">
+                            Importador e Validador de Endereços
+                          </h3>
+                          <p className="text-[10px] text-slate-400">Canal regional de carga: <span className="text-white font-bold uppercase">{region}</span></p>
+                        </div>
+                      </div>
+                      
+                      <button
+                        type="button"
+                        onClick={() => setIsImporterOpen(false)}
+                        className="bg-slate-800 hover:bg-slate-705 p-2 rounded-xl text-slate-400 hover:text-white transition-all cursor-pointer active:scale-90"
+                      >
+                        <X className="w-4 h-4 text-slate-400 font-bold" />
+                      </button>
+                    </div>
+
+                    <div className="p-2 text-slate-800 max-h-[85vh] overflow-y-auto">
+                      <ClientImporter 
+                        currentRegion={region}
+                        onImportStops={(stops) => {
+                          setGStops(prev => {
+                            const prevIds = new Set(prev.map(p => p.id));
+                            const filteredNewStops = stops.filter(s => !prevIds.has(s.id));
+                            return [...prev, ...filteredNewStops];
+                          });
+                          setIsImporterOpen(false); // Cleanly dismiss
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
             </div>
           ) : (
@@ -2914,10 +4583,101 @@ export const GUARIBA_LOCATIONS = [
 ];
 
 export function MotoristaDashboard({ user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize }: MotoristaProps) {
-  const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos'>('nova');
+  const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos' | 'ativa'>('nova');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
   const [mobileFocus, setMobileFocus] = useState<'actions' | 'map'>('actions');
   
+  // Signature Drawing canvas states for customer verification
+  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [hasSigned, setHasSigned] = useState(false);
+  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+
+  // Clear digital signature
+  const handleClearSignature = () => {
+    const canvas = signatureCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Draw elegant slate-200 help guideline
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(15, canvas.height - 35);
+        ctx.lineTo(canvas.width - 15, canvas.height - 35);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    setHasSigned(false);
+  };
+
+  // Convert coordinate spaces of click / touch events to relative canvas layout dimensions
+  const getCanvasCoords = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    if ('touches' in e) {
+      if (e.touches.length === 0) return { x: 0, y: 0 };
+      const touch = e.touches[0];
+      return {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      };
+    } else {
+      return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+  };
+
+  const handleStartDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const coords = getCanvasCoords(e, canvas);
+    ctx.strokeStyle = '#0f172a'; // slate-900 high contrast ink ink
+    ctx.lineWidth = 2.8;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(coords.x, coords.y);
+    setIsDrawing(true);
+    setHasSigned(true);
+  };
+
+  const handleDraw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawing) return;
+    e.preventDefault();
+    const canvas = signatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const coords = getCanvasCoords(e, canvas);
+    ctx.lineTo(coords.x, coords.y);
+    ctx.stroke();
+  };
+
+  const handleStopDrawing = () => {
+    setIsDrawing(false);
+  };
+
+  const handlePhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCapturedPhoto(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Route editing states
   const [mEditingRouteId, setMEditingRouteId] = useState<string | null>(null);
   const [mEditingRouteName, setMEditingRouteName] = useState('');
@@ -2929,17 +4689,17 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   
   // Create state for Stop fields inside Nova Rota
   const [routeName, setRouteName] = useState('Super Entrega ' + new Date().toLocaleDateString('pt-BR'));
-  const [origin, setOrigin] = useState('CD Central ' + (user as any).region + ' - BR-116, Km 410');
-  const [originLat, setOriginLat] = useState(-18.845);
-  const [originLng, setOriginLng] = useState(-41.945);
+  const [origin, setOrigin] = useState('CD Central ' + (user as any).region + ' - Av. dos Camaras, 513, Santo Antonio, Cariacica-ES');
+  const [originLat, setOriginLat] = useState(-20.302534);
+  const [originLng, setOriginLng] = useState(-40.401630);
 
   // Stop Form State
   const [stops, setStops] = useState<Parada[]>([]);
   const [clientName, setClientName] = useState('');
   const [clientWhatsApp, setClientWhatsApp] = useState('');
   const [clientAddress, setClientAddress] = useState('');
-  const [customLat, setCustomLat] = useState<number>(-18.85);
-  const [customLng, setCustomLng] = useState<number>(-41.95);
+  const [customLat, setCustomLat] = useState<number>(-20.302534);
+  const [customLng, setCustomLng] = useState<number>(-40.401630);
 
   const [chatText, setChatText] = useState('');
   const [selectedCompletedRouteId, setSelectedCompletedRouteId] = useState<string | null>(null);
@@ -2956,6 +4716,126 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const activeRoute = myRoutes.find(r => r.status === 'active') || null;
 
   const [isSharingLocation, setIsSharingLocation] = useState(true);
+
+  // Synchronize dynamic redirect tab
+  useEffect(() => {
+    if (activeRoute) {
+      setActiveTab('ativa');
+    }
+  }, [activeRoute?.id]);
+
+  // Guidelines reset on stop transition
+  useEffect(() => {
+    if (activeTab === 'ativa') {
+      setTimeout(() => {
+        handleClearSignature();
+      }, 150);
+    }
+  }, [activeTab, activeRoute?.currentStopIndex]);
+
+  // Delivery confirmation action
+  const handleConfirmDelivery = async (routeId: string, stopId: string) => {
+    if (!hasSigned) {
+      alert('Por favor, solicite a assinatura digital do cliente na tela do dispositivo.');
+      return;
+    }
+    if (!capturedPhoto) {
+      alert('Por favor, faça a fotoconferência da mercadoria entregue para anexar como comprovante.');
+      return;
+    }
+
+    const canvas = signatureCanvasRef.current;
+    let signatureBase64 = '';
+    if (canvas) {
+      signatureBase64 = canvas.toDataURL('image/png');
+    }
+
+    const currentStop = activeRoute?.stops[activeRoute.currentStopIndex];
+    if (!currentStop) return;
+
+    const payload = {
+      routeId,
+      stopId,
+      signatureUrl: signatureBase64,
+      photoUrl: capturedPhoto,
+      completedAt: new Date().toISOString()
+    };
+
+    // If signal status is configured unstable OR navigator is offline, trigger SW Queue
+    if (connectionStatus === 'unstable' || !navigator.onLine) {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'QUEUE_DELIVERY_CONFIRMATION',
+          payload
+        });
+      } else {
+        console.warn('Service worker controller not active. Storing local simulation.');
+      }
+
+      // Optimistic local update so driver can progress
+      const updatedStops = [...activeRoute.stops];
+      const stopIndex = updatedStops.findIndex(s => s.id === stopId);
+      if (stopIndex !== -1) {
+        updatedStops[stopIndex] = {
+          ...updatedStops[stopIndex],
+          status: 'completed' as const,
+          signatureUrl: signatureBase64,
+          photoUrl: capturedPhoto,
+          completedAt: payload.completedAt
+        };
+
+        const nextIndex = activeRoute.currentStopIndex + 1;
+        const isRouteFinished = nextIndex >= updatedStops.length;
+        const updatedStatus = isRouteFinished ? 'completed' : 'active';
+
+        onUpdateRoute(routeId, {
+          stops: updatedStops,
+          currentStopIndex: nextIndex,
+          status: updatedStatus
+        });
+
+        alert('Conexão instável! Entrega armazenada com segurança na fila de upload offline (Service Worker). Envio ocorrerá automaticamente quando reestabelecer conexão.');
+      }
+    } else {
+      // Direct Online Write
+      const updatedStops = [...activeRoute.stops];
+      const stopIndex = updatedStops.findIndex(s => s.id === stopId);
+      if (stopIndex !== -1) {
+        updatedStops[stopIndex] = {
+          ...updatedStops[stopIndex],
+          status: 'completed' as const,
+          signatureUrl: signatureBase64,
+          photoUrl: capturedPhoto,
+          completedAt: payload.completedAt
+        };
+
+        const nextIndex = activeRoute.currentStopIndex + 1;
+        const isRouteFinished = nextIndex >= updatedStops.length;
+        const updatedStatus = isRouteFinished ? 'completed' : 'active';
+
+        try {
+          await onUpdateRoute(routeId, {
+            stops: updatedStops,
+            currentStopIndex: nextIndex,
+            status: updatedStatus
+          });
+          alert('Entrega confirmada com sucesso! Comprovantes sincronizados em tempo real.');
+        } catch (err: any) {
+          console.warn('Erro ao salvar online, tentando queuing em segundo plano:', err);
+          if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: 'QUEUE_DELIVERY_CONFIRMATION',
+              payload
+            });
+          }
+          alert('Sua assinatura e foto foram guardadas offline por segurança e serão enviadas quando a rede normalizar.');
+        }
+      }
+    }
+
+    setCapturedPhoto(null);
+    setHasSigned(false);
+  };
 
   // Background Geolocation simulator or real GPS tracker
   useEffect(() => {
@@ -3433,7 +5313,34 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
 
       {/* Left Column Container */}
       <div className={`lg:col-span-4 space-y-4 w-full ${mobileFocus === 'actions' ? 'block' : 'hidden lg:block'}`}>
-        <div className="grid grid-cols-4 gap-1 bg-slate-100 p-1.5 rounded-2xl border border-slate-200/40">
+        {activeRoute && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('ativa')}
+            className={`w-full p-4.5 rounded-2xl border flex items-center justify-between gap-3 text-left transition-all cursor-pointer shadow-md select-none ${
+              activeTab === 'ativa'
+                ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-700 shadow-emerald-200/50 scale-[1.01]'
+                : 'bg-emerald-50/70 hover:bg-emerald-100 border-emerald-250/70 text-emerald-950 font-medium'
+            }`}
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+                activeTab === 'ativa' ? 'bg-white/20 text-white' : 'bg-emerald-600 text-white'
+              }`}>
+                <Truck className={`w-5 h-5 ${activeTab === 'ativa' ? '' : 'animate-bounce'}`} />
+              </div>
+              <div className="min-w-0">
+                <span className="text-[9px] font-bold block opacity-90 uppercase tracking-widest leading-none">Jornada Ativa</span>
+                <strong className="text-xs font-black truncate block mt-1.5 leading-none">Confirmar Assinatura & Foto</strong>
+              </div>
+            </div>
+            <div className="flex items-center gap-1 font-mono text-[9px] bg-emerald-700/30 text-emerald-100 px-2 py-1 rounded-lg shrink-0 border border-emerald-600/30 font-bold">
+               <span>{activeRoute.currentStopIndex + 1}/{activeRoute.stops.length} Parada</span>
+            </div>
+          </button>
+        )}
+
+        <div className="grid grid-cols-5 gap-1 bg-slate-100 p-1.5 rounded-2xl border border-slate-200/40">
           <button
             onClick={() => setActiveTab('nova')}
             className={`py-3 px-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1 uppercase tracking-wider ${
@@ -3460,7 +5367,7 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             }`}
           >
             <Truck className="w-3.5 h-3.5 text-emerald-600" />
-            Rota REC ({myReceivedRoutes.length})
+            REC ({myReceivedRoutes.length})
           </button>
           <button
             onClick={() => setActiveTab('chat')}
@@ -3682,41 +5589,51 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             <span className="font-extrabold text-slate-800 text-xs block uppercase tracking-wider">Minhas Rotas ({myCreatedRoutes.length})</span>
 
             <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
-              {myCreatedRoutes.map(route => (
-                <div key={route.id} className="p-4 border border-slate-200 rounded-2xl bg-slate-50/50 space-y-3 shadow-sm">
-                  <div className="flex items-center justify-between gap-2">
-                    <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px]">{route.name}</strong>
-                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
-                      route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                      route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-400'
-                    }`}>
-                      {route.status}
-                    </span>
-                  </div>
+              <AnimatePresence mode="popLayout">
+                {myCreatedRoutes.map(route => (
+                  <motion.div 
+                    key={route.id} 
+                    layout
+                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: -15 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    className="p-4 border border-slate-200 rounded-2xl bg-slate-50/50 space-y-3 shadow-sm"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px]">{route.name}</strong>
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
+                        route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                        route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-400'
+                      }`}>
+                        {route.status}
+                      </span>
+                    </div>
 
-                  <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
-                  <p className="text-[11px] text-slate-500">🏁 Paradas: <strong className="text-indigo-600 font-extrabold">{route.stops.length} entregas agendadas</strong></p>
+                    <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
+                    <p className="text-[11px] text-slate-500">🏁 Paradas: <strong className="text-indigo-600 font-extrabold">{route.stops.length} entregas agendadas</strong></p>
 
-                  <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
-                    {route.status === 'draft' && (
+                    <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
+                      {route.status === 'draft' && (
+                        <button
+                          onClick={() => onStartRoute(route.id)}
+                          className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                        >
+                          <Play className="w-4 h-4 fill-white" />
+                          Iniciar Rota
+                        </button>
+                      )}
+
                       <button
-                        onClick={() => onStartRoute(route.id)}
-                        className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                        onClick={() => onDeleteRoute(route.id)}
+                        className="p-2.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
                       >
-                        <Play className="w-4 h-4 fill-white" />
-                        Iniciar Rota
+                        <Trash2 className="w-4.5 h-4.5" />
                       </button>
-                    )}
-
-                    <button
-                      onClick={() => onDeleteRoute(route.id)}
-                      className="p-2.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
-                    >
-                      <Trash2 className="w-4.5 h-4.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
               {myCreatedRoutes.length === 0 && (
                 <div className="text-center py-12 text-slate-400 font-medium">Você não criou nenhuma rota ainda. Use a aba Nova Rota para começar.</div>
               )}
@@ -3933,91 +5850,101 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             ) : (
               // List view of received routes
               <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
-                {myReceivedRoutes.map(route => (
-                  <div key={route.id} className="p-4 border border-slate-200 rounded-2xl bg-emerald-50/25 border-l-4 border-l-emerald-500 space-y-3 shadow-md">
-                    <div className="flex items-center justify-between gap-2">
-                      <div>
-                        <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px] block">
-                          {route.name}
-                        </strong>
-                        <span className="text-[9px] text-slate-400 block font-mono">Recebida do Gerente Regional</span>
+                <AnimatePresence mode="popLayout">
+                  {myReceivedRoutes.map(route => (
+                    <motion.div 
+                      key={route.id} 
+                      layout
+                      initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.9, y: -15 }}
+                      transition={{ duration: 0.25, ease: 'easeOut' }}
+                      className="p-4 border border-slate-200 rounded-2xl bg-emerald-50/25 border-l-4 border-l-emerald-500 space-y-3 shadow-md"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px] block">
+                            {route.name}
+                          </strong>
+                          <span className="text-[9px] text-slate-400 block font-mono">Recebida do Gerente Regional</span>
+                        </div>
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
+                          route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                          route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                        }`}>
+                          {route.status}
+                        </span>
                       </div>
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
-                        route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                        route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                      }`}>
-                        {route.status}
-                      </span>
-                    </div>
 
-                    <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
-                    <div className="text-[11px] text-slate-500 mt-1">
-                      <p className="font-bold text-slate-700 mb-1 uppercase text-[9px] tracking-wider">📋 Clientes / Paradas ({route.stops.length}):</p>
-                      <div className="bg-white/80 rounded-xl p-2 border space-y-1 font-sans text-[10.5px] leading-relaxed">
-                        {route.stops.map((st, idx) => (
-                          <motion.div 
-                            key={st.id} 
-                            layout
-                            initial={{ opacity: 0.9, scale: 0.98 }}
-                            animate={{ 
-                              opacity: 1, 
-                              scale: 1,
-                              backgroundColor: st.status === 'completed' ? '#ecfdf5' : st.status === 'Chegando' ? '#fffbeb' : '#ffffff',
-                              color: st.status === 'completed' ? '#065f46' : st.status === 'Chegando' ? '#92400e' : '#334155'
+                      <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        <p className="font-bold text-slate-700 mb-1 uppercase text-[9px] tracking-wider">📋 Clientes / Paradas ({route.stops.length}):</p>
+                        <div className="bg-white/80 rounded-xl p-2 border space-y-1 font-sans text-[10.5px] leading-relaxed">
+                          {route.stops.map((st, idx) => (
+                            <motion.div 
+                              key={st.id} 
+                              layout
+                              initial={{ opacity: 0.9, scale: 0.98 }}
+                              animate={{ 
+                                opacity: 1, 
+                                scale: 1,
+                                backgroundColor: st.status === 'completed' ? '#ecfdf5' : st.status === 'Chegando' ? '#fffbeb' : '#ffffff',
+                                color: st.status === 'completed' ? '#065f46' : st.status === 'Chegando' ? '#92400e' : '#334155'
+                              }}
+                              className="flex justify-between items-center px-2 py-1.5 rounded-lg border border-slate-100 gap-1"
+                            >
+                              <span className="truncate max-w-[140px] font-medium">#{idx + 1} {st.clientName}</span>
+                              <span className={`font-mono font-black text-[9px] shrink-0 uppercase border px-1.5 py-0.5 rounded-full leading-none ${
+                                st.status === 'completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                                st.status === 'Chegando' ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-500 border-slate-150'
+                              }`}>
+                                {st.status === 'completed' ? 'CONCLUÍDO ✓' : st.status === 'Chegando' ? 'CHEGANDO 🚚' : 'PENDENTE'}
+                              </span>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
+                        {route.status === 'draft' && (
+                          <button
+                            onClick={() => {
+                              onStartRoute(route.id);
+                              alert(`Rota "${route.name}" iniciada com sucesso! Você pode acompanhar o monitoramento de satélite.`);
                             }}
-                            className="flex justify-between items-center px-2 py-1.5 rounded-lg border border-slate-100 gap-1"
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
                           >
-                            <span className="truncate max-w-[140px] font-medium">#{idx + 1} {st.clientName}</span>
-                            <span className={`font-mono font-black text-[9px] shrink-0 uppercase border px-1.5 py-0.5 rounded-full leading-none ${
-                              st.status === 'completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                              st.status === 'Chegando' ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-500 border-slate-150'
-                            }`}>
-                              {st.status === 'completed' ? 'CONCLUÍDO ✓' : st.status === 'Chegando' ? 'CHEGANDO 🚚' : 'PENDENTE'}
-                            </span>
-                          </motion.div>
-                        ))}
-                      </div>
-                    </div>
+                            <Play className="w-3.5 h-3.5 fill-white" />
+                            Iniciar Rota
+                          </button>
+                        )}
 
-                    <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
-                      {route.status === 'draft' && (
                         <button
                           onClick={() => {
-                            onStartRoute(route.id);
-                            alert(`Rota "${route.name}" iniciada com sucesso! Você pode acompanhar o monitoramento de satélite.`);
+                            setMEditingRouteId(route.id);
+                            setMEditingRouteName(route.name);
+                            setMEditingRouteOrigin(route.origin);
+                            setMEditingRouteStops(route.stops);
                           }}
-                          className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                          className="py-1.5 px-3 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-xl font-bold transition-all hover:border-indigo-300 cursor-pointer text-xs"
                         >
-                          <Play className="w-3.5 h-3.5 fill-white" />
-                          Iniciar Rota
+                          Editar
                         </button>
-                      )}
 
-                      <button
-                        onClick={() => {
-                          setMEditingRouteId(route.id);
-                          setMEditingRouteName(route.name);
-                          setMEditingRouteOrigin(route.origin);
-                          setMEditingRouteStops(route.stops);
-                        }}
-                        className="py-1.5 px-3 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-xl font-bold transition-all hover:border-indigo-300 cursor-pointer text-xs"
-                      >
-                        Editar
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          if (confirm('Deseja excluir esta rota recebida permanentemente?')) {
-                            onDeleteRoute(route.id);
-                          }
-                        }}
-                        className="p-1.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                        <button
+                          onClick={() => {
+                            if (confirm('Deseja excluir esta rota recebida permanentemente?')) {
+                              onDeleteRoute(route.id);
+                            }
+                          }}
+                          className="p-1.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
                 {myReceivedRoutes.length === 0 && (
                   <div className="text-center py-12 text-slate-400 font-medium">Nenhuma rota enviada pelo gerente regional no momento.</div>
                 )}
@@ -4216,6 +6143,196 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* TAB 6: ACTIVE STOP CONFIRMATION & VERIFICATION (SIGNATURE & PHOTO) */}
+            {activeTab === 'ativa' && activeRoute && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 text-xs font-sans">
+                {(() => {
+                  const currentStopIndex = activeRoute.currentStopIndex;
+                  const currentStop = activeRoute.stops[currentStopIndex];
+
+                  if (!currentStop) {
+                    return (
+                      <div className="text-center py-10 space-y-3">
+                        <div className="w-14 h-14 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mx-auto text-emerald-500">
+                          <Check className="w-7 h-7" />
+                        </div>
+                        <div>
+                          <h4 className="font-extrabold text-slate-800 text-sm uppercase">Todas as Entregas Concluídas!</h4>
+                          <p className="text-[10px] text-slate-400 mt-1 max-w-xs mx-auto">
+                            Excelente! Todas as paradas deste roteiro foram entregues e confirmadas com assinatura digital.
+                          </p>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            try {
+                              // Mark the route itself as completed
+                              await onUpdateRoute(activeRoute.id, { status: 'completed' });
+                              alert('Jornada de entregas finalizada com sucesso! Relatório telemetria salvo.');
+                              setActiveTab('resumos');
+                            } catch (e) {
+                              alert('Falha ao concluir rota. Tente novamente.');
+                            }
+                          }}
+                          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider text-xs"
+                        >
+                          <CheckCircle className="w-4 h-4 text-white" />
+                          Finalizar Jornada
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Delivery Card Header */}
+                      <div className="border border-emerald-100 bg-emerald-50/15 rounded-2xl p-4">
+                        <div className="flex items-center justify-between font-mono text-[9px] text-emerald-700 font-extrabold pb-2 border-b border-emerald-100/50 uppercase tracking-widest">
+                          <span>📍 Entrega Atual (Parada #{currentStopIndex + 1})</span>
+                          <span>Região: {region}</span>
+                        </div>
+                        
+                        <div className="mt-3">
+                          <strong className="text-slate-800 text-[13px] block font-black leading-tight">{currentStop.clientName}</strong>
+                          <p className="text-[11px] text-slate-500 mt-1 select-all font-medium leading-snug">{currentStop.address}</p>
+                        </div>
+
+                        {/* Customer Quick Actions */}
+                        <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+                          {currentStop.clientWhatsApp && (
+                            <a
+                              href={`https://wa.me/${currentStop.clientWhatsApp.replace(/\D/g, '')}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex-1 py-2.5 bg-white border border-slate-200 hover:border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
+                            >
+                              <Phone className="w-3.5 h-3.5 text-emerald-500 fill-emerald-150 inline" />
+                              <span className="align-middle ml-1">WhatsApp</span>
+                            </a>
+                          )}
+                          <a
+                            href={`https://www.google.com/maps/search/?api=1&query=${currentStop.lat},${currentStop.lng}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 py-2.5 bg-white border border-slate-200 hover:border-indigo-200 text-indigo-800 hover:bg-indigo-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
+                          >
+                            <MapPin className="w-3.5 h-3.5 text-indigo-500 inline" />
+                            <span className="align-middle ml-1">Navegar</span>
+                          </a>
+                        </div>
+                      </div>
+
+                      {/* CLIENT DIGITAL SIGNATURE PAD */}
+                      <div className="space-y-2 select-none">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Passo 1: Assinatura Digital do Cliente</span>
+                          {hasSigned && (
+                            <button
+                              type="button"
+                              onClick={handleClearSignature}
+                              className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Limpar
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="relative border border-slate-250 bg-slate-50/50 rounded-2xl overflow-hidden aspect-[16/9] flex flex-col shadow-inner">
+                          <canvas
+                            ref={signatureCanvasRef}
+                            width={320}
+                            height={180}
+                            onMouseDown={handleStartDrawing}
+                            onMouseMove={handleDraw}
+                            onMouseUp={handleStopDrawing}
+                            onMouseLeave={handleStopDrawing}
+                            onTouchStart={handleStartDrawing}
+                            onTouchMove={handleDraw}
+                            onTouchEnd={handleStopDrawing}
+                            className="w-full h-full bg-transparent cursor-crosshair touch-none"
+                          />
+                          {!hasSigned && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/5 backdrop-blur-[0.5px] pointer-events-none select-none text-slate-400">
+                              <span className="text-[10px] uppercase font-black tracking-widest text-slate-600">Assinar aqui na tela</span>
+                              <span className="text-[9px] text-slate-400 mt-1">Utilize o dedo ou caneta touch</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* PHOTO DELIVERY CONFERENCE WITH DEVICE NATIVE CAMERA */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Passo 2: Foto de Comprovante de Carga</span>
+                          {capturedPhoto && (
+                            <button
+                              type="button"
+                              onClick={() => setCapturedPhoto(null)}
+                              className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              Recapturar
+                            </button>
+                          )}
+                        </div>
+
+                        {!capturedPhoto ? (
+                          <div className="border border-dashed border-slate-300 rounded-2xl bg-slate-50/50 p-6 flex flex-col items-center justify-center text-center gap-3">
+                            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 border border-slate-200">
+                              <Camera className="w-6 h-6" />
+                            </div>
+                            <div className="space-y-1">
+                              <p className="font-extrabold text-slate-700 text-[11px]">Fotoconferência de Carga</p>
+                              <p className="text-[9px] text-slate-400 max-w-[220px]">Registre uma imagem nítida da mercadoria entregue no local do recebedor.</p>
+                            </div>
+
+                            {/* Native camera trigger input */}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              id="photo-capture-input-panel"
+                              className="hidden"
+                              onChange={handlePhotoFileChange}
+                            />
+                            <label
+                              htmlFor="photo-capture-input-panel"
+                              className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 text-indigo-700 font-extrabold rounded-xl shadow-sm cursor-pointer select-none active:scale-95 transition-all text-[11px] uppercase tracking-wider flex items-center gap-1.5"
+                            >
+                              <Camera className="w-4 h-4 text-indigo-600" />
+                              Capturar da Câmera
+                            </label>
+                          </div>
+                        ) : (
+                          <div className="relative border border-slate-200 bg-slate-50 p-1.5 rounded-2xl overflow-hidden shadow-sm">
+                            <img
+                              src={capturedPhoto}
+                              alt="Comprovante de entrega"
+                              referrerPolicy="no-referrer"
+                              className="w-full aspect-[4/3] object-cover rounded-xl border border-slate-200/50"
+                            />
+                            <div className="absolute top-3 right-3 flex gap-1.5">
+                              <span className="bg-emerald-500/90 text-white font-mono font-black text-[9px] px-2 py-0.5 rounded uppercase shadow-sm select-none">FOTO CAPTURADA</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* CONCLUDE SUBMIT ACTION BUTTON */}
+                      <button
+                        type="button"
+                        onClick={() => handleConfirmDelivery(activeRoute.id, currentStop.id)}
+                        className="w-full mt-6 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-650 hover:from-emerald-700 hover:to-teal-700 text-white font-black uppercase rounded-2xl flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-98 text-xs tracking-wider cursor-pointer"
+                      >
+                        <CheckCircle className="w-4 h-4 fill-white text-emerald-605" />
+                        Confirmar & Registrar Entrega
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>

@@ -6,7 +6,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, animate } from 'motion/react';
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useMap } from '@vis.gl/react-google-maps';
-import { Rota, GPSLocation, Parada } from '../types';
+import { Rota, GPSLocation, Parada, Region } from '../types';
+import { INITIAL_REGIONS } from '../mockData';
 import { 
   Truck, MapPin, Navigation, Warehouse, Play, Signal, 
   Filter, Info, ShieldAlert, CheckCircle2, AlertTriangle, HelpCircle, Layers 
@@ -208,6 +209,7 @@ interface RouteMapProps {
   singleRouteMode?: Rota | null; // If passed, specializes on this route
   singleDriverLocation?: GPSLocation | null;
   breadcrumbs?: { [drvId: string]: { lat: number; lng: number }[] };
+  regions?: Region[];
 }
 
 export default function RouteMap({ 
@@ -217,7 +219,8 @@ export default function RouteMap({
   currentUserRole,
   singleRouteMode = null,
   singleDriverLocation = null,
-  breadcrumbs
+  breadcrumbs,
+  regions = INITIAL_REGIONS
 }: RouteMapProps) {
   
   // States
@@ -400,8 +403,8 @@ export default function RouteMap({
                   className="bg-transparent font-semibold text-slate-700 outline-none max-w-[100px]"
                 >
                   <option value="all">Filtro: Todas Regiões</option>
-                  {['GV1', 'GV2', 'GV3', 'ES/MG', 'Norte', 'Sul', '262'].map(r => (
-                    <option key={r} value={r}>Região {r}</option>
+                  {regions.map(r => (
+                    <option key={r.id} value={r.id}>Região {r.id}</option>
                   ))}
                 </select>
               </div>

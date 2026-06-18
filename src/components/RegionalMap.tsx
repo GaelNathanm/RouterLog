@@ -56,7 +56,7 @@ export default function RegionalMap({ rotas, locations, region, breadcrumbs }: R
       return { lat: regionalRoutes[0].originLat, lng: regionalRoutes[0].originLng };
     }
     return region === 'ES/MG' 
-      ? { lat: -19.925, lng: -43.945 } 
+      ? { lat: -20.309455, lng: -40.409505 } 
       : { lat: -18.845, lng: -41.945 };
   }, [regionalRoutes, region]);
 

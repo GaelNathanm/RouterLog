@@ -82,14 +82,14 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
       case 'GV1':
       case 'GV2':
       case 'VARGUES':
-      case 'GOVERNADOR VALADARES':
-        return { lat: -18.85, lng: -41.95 };
+      case 'GRANDE VITORIA':
+        return { lat: -20.302534, lng: -40.401030 };
       case 'BH':
       case 'BELO HORIZONTE':
       case 'MG':
-        return { lat: -19.92, lng: -43.94 };
+        return { lat: -20.302534, lng: -40.401630 };
       default:
-        return { lat: -18.85, lng: -41.95 };
+        return { lat: -20.302534, lng: -40.401630 };
     }
   };
 

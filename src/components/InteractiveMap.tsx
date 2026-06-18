@@ -17,7 +17,7 @@ export default function InteractiveMap({ rota, driverLocation, region }: MapProp
   
   // GV1 Region Default Bounding Box
   const boundingDefaults: Record<string, { minLat: number; maxLat: number; minLng: number; maxLng: number }> = {
-    GV1: { minLat: -18.870, maxLat: -18.840, minLng: -41.960, maxLng: -41.930 },
+    GV1: { minLat: -20.302529, maxLat: -20.394869, minLng: -40.401693, maxLng: -40.365705 },
     MG: { minLat: -19.945, maxLat: -19.920, minLng: -43.950, maxLng: -43.930 }
   };
 

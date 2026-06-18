@@ -3,7 +3,7 @@ import { ShieldAlert, Compass, Keyboard, Lock, UserCheck, AlertOctagon, HelpCirc
 import { RouteUser } from '../types';
 
 interface AdminLoginGatewayProps {
-  onLogin: (email: string) => { success: boolean; error?: string; user?: RouteUser };
+  onLogin: (email: string) => { success: boolean; error?: string; user?: RouteUser } | Promise<{ success: boolean; error?: string; user?: RouteUser }>;
   onSuccess: () => void;
 }
 
@@ -33,14 +33,18 @@ export default function AdminLoginGateway({ onLogin, onSuccess }: AdminLoginGate
         return;
       }
 
-      const result = onLogin(email);
-      if (result.success) {
+      Promise.resolve(onLogin(email)).then((result) => {
+        if (result.success) {
+          setIsLoading(false);
+          onSuccess();
+        } else {
+          setErrorMsg(result.error || 'Erro inesperado na autenticação administrativa.');
+          setIsLoading(false);
+        }
+      }).catch((err) => {
+        setErrorMsg(err.message || 'Erro inesperado na autenticação administrativa.');
         setIsLoading(false);
-        onSuccess();
-      } else {
-        setErrorMsg(result.error || 'Erro inesperado na autenticação administrativa.');
-        setIsLoading(false);
-      }
+      });
     }, 800);
   };
 

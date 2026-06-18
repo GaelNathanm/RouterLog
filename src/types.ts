@@ -55,6 +55,9 @@ export interface Parada {
   lat: number;
   lng: number;
   status: 'pending' | 'completed' | 'Chegando';
+  signatureUrl?: string; // base64 interactive canvas digital signature
+  photoUrl?: string;     // base64 device camera photo proof (fotoconferência)
+  completedAt?: string;  // completion ISO timestamp
 }
 
 export interface Rota {
@@ -171,3 +174,13 @@ export interface AuditLogEntry {
   details: string;
   timestamp: string;
 }
+
+export interface Region {
+  id: string;
+  name: string;
+  description?: string;
+  lat?: number;
+  lng?: number;
+  radius?: number; // Geofence radius in meters
+}
+
