@@ -6,7 +6,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, animate } from 'motion/react';
 import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useMap } from '@vis.gl/react-google-maps';
-import { Rota, GPSLocation, Parada, Region } from '../types';
+import { Rota, GPSLocation, Parada, Region, UserRole } from '../types';
 import { INITIAL_REGIONS } from '../mockData';
 import { 
   Truck, MapPin, Navigation, Warehouse, Play, Signal, 
@@ -210,6 +210,7 @@ interface RouteMapProps {
   singleDriverLocation?: GPSLocation | null;
   breadcrumbs?: { [drvId: string]: { lat: number; lng: number }[] };
   regions?: Region[];
+  onStopClick?: (stop: Parada) => void;
 }
 
 export default function RouteMap({ 
@@ -220,7 +221,8 @@ export default function RouteMap({
   singleRouteMode = null,
   singleDriverLocation = null,
   breadcrumbs,
-  regions = INITIAL_REGIONS
+  regions = INITIAL_REGIONS,
+  onStopClick
 }: RouteMapProps) {
   
   // States
@@ -687,6 +689,19 @@ export default function RouteMap({
                       </span>
                       <span className="text-slate-400 font-normal">Sessão: {selectedStop.routeName}</span>
                     </div>
+
+                    {currentUserRole === 2 && selectedStop.stop.status !== 'completed' && onStopClick && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onStopClick(selectedStop.stop);
+                          setSelectedStop(null);
+                        }}
+                        className="mt-3 w-full py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white font-extrabold rounded-lg text-[10px] uppercase shadow-sm transition-all active:scale-95 text-center cursor-pointer tracking-wider"
+                      >
+                        Confirmar Entrega
+                      </button>
+                    )}
                   </div>
                 </InfoWindow>
               )}

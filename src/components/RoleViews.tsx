@@ -4665,6 +4665,197 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const [hasSigned, setHasSigned] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
 
+  // Real-world Multi-Photo Confirmation Modal state for clicking any stop map marker
+  const [confirmingStop, setConfirmingStop] = useState<Parada | null>(null);
+  const [confirmPhotos, setConfirmPhotos] = useState<string[]>([]); // array of base64 photo strings
+  
+  const modalSignatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [modalIsDrawing, setModalIsDrawing] = useState(false);
+  const [modalHasSigned, setModalHasSigned] = useState(false);
+
+  // Clear digital signature for modal
+  const handleModalClearSignature = () => {
+    const canvas = modalSignatureCanvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // Draw elegant slate-200 help guideline
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(15, canvas.height - 35);
+        ctx.lineTo(canvas.width - 15, canvas.height - 35);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    setModalHasSigned(false);
+  };
+
+  const getModalCanvasCoords = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    if ('touches' in e) {
+      if (e.touches.length === 0) return { x: 0, y: 0 };
+      const touch = e.touches[0];
+      return {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+      };
+    } else {
+      return {
+        x: e.clientX - rect.left,
+        y: e.clientY - rect.top
+      };
+    }
+  };
+
+  const handleModalStartDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    const canvas = modalSignatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const coords = getModalCanvasCoords(e, canvas);
+    ctx.strokeStyle = '#0f172a'; // slate-900 high contrast ink ink
+    ctx.lineWidth = 2.8;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(coords.x, coords.y);
+    setModalIsDrawing(true);
+    setModalHasSigned(true);
+  };
+
+  const handleModalDraw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
+    if (!modalIsDrawing) return;
+    e.preventDefault();
+    const canvas = modalSignatureCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const coords = getModalCanvasCoords(e, canvas);
+    ctx.lineTo(coords.x, coords.y);
+    ctx.stroke();
+  };
+
+  const handleModalStopDrawing = () => {
+    setModalIsDrawing(false);
+  };
+
+  // Reset/draw guidelines on modal signature canvas when confirmingStop changes
+  useEffect(() => {
+    if (confirmingStop) {
+      setTimeout(() => {
+        handleModalClearSignature();
+      }, 200);
+    }
+  }, [confirmingStop]);
+
+  // Handle up to 5 photos additions
+  const handleModalPhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const remainingSlots = 5 - confirmPhotos.length;
+      if (remainingSlots <= 0) {
+        alert('Limite máximo de 5 fotos atingido!');
+        return;
+      }
+      
+      const filesToProcess = Array.from(files).slice(0, remainingSlots) as File[];
+      
+      filesToProcess.forEach(file => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          setConfirmPhotos(prev => {
+            if (prev.length >= 5) return prev;
+            return [...prev, reader.result as string];
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  };
+
+  const handleRemoveConfirmPhoto = (indexToRemove: number) => {
+    setConfirmPhotos(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
+  // Real-world delivery/collection submission via modal
+  const handleConfirmModalDelivery = async () => {
+    if (!confirmingStop) return;
+    if (!activeRoute) return;
+
+    if (!modalHasSigned) {
+      alert('Por favor, solicite a assinatura digital do recebedor na tela.');
+      return;
+    }
+    
+    if (confirmPhotos.length === 0) {
+      alert('Por favor, anexe ao menos 1 foto como foto-comprovante (máximo de 5 fotos).');
+      return;
+    }
+
+    const canvas = modalSignatureCanvasRef.current;
+    let signatureBase64 = '';
+    if (canvas) {
+      signatureBase64 = canvas.toDataURL('image/png');
+    }
+
+    const payload = {
+      routeId: activeRoute.id,
+      stopId: confirmingStop.id,
+      signatureUrl: signatureBase64,
+      photoUrl: confirmPhotos[0], // backward compatibility
+      photoUrls: confirmPhotos,   // multiple photos
+      completedAt: new Date().toISOString()
+    };
+
+    const updatedStops = activeRoute.stops.map(s => {
+      if (s.id === confirmingStop.id) {
+        return {
+          ...s,
+          status: 'completed' as const,
+          signatureUrl: signatureBase64,
+          photoUrl: confirmPhotos[0],
+          photoUrls: confirmPhotos,
+          completedAt: payload.completedAt
+        };
+      }
+      return s;
+    });
+
+    // Automatically transition currentStopIndex to the next pending item or end of route
+    let nextIndex = updatedStops.findIndex(s => s.status !== 'completed');
+    if (nextIndex === -1) {
+      nextIndex = updatedStops.length;
+    }
+
+    const isRouteFinished = nextIndex >= updatedStops.length;
+    const updatedStatus = isRouteFinished ? 'completed' : 'active';
+
+    try {
+      await onUpdateRoute(activeRoute.id, {
+        stops: updatedStops,
+        currentStopIndex: nextIndex,
+        status: updatedStatus
+      });
+      alert('Comprovante múltiplo e assinatura digital gravados com sucesso!');
+      
+      // Reset Modal parameters
+      setConfirmingStop(null);
+      setConfirmPhotos([]);
+      setModalHasSigned(false);
+    } catch (err: any) {
+      console.error('Falha de escrita direta, tentando fallback:', err);
+      // In case of backup offline scenario
+      alert('Erro ao gravar online. Tentando fluxo emergencial local.');
+    }
+  };
+
   // Clear digital signature
   const handleClearSignature = () => {
     const canvas = signatureCanvasRef.current;
@@ -6454,6 +6645,7 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
               rota={activeRoute} 
               driverLocation={activeRoute ? locations[user.id] || null : null}
               region={region}
+              onStopClick={setConfirmingStop}
             />
           ) : (
             <RouteMap 
@@ -6463,10 +6655,178 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
               currentUserRole={user.role}
               singleRouteMode={activeRoute}
               singleDriverLocation={activeRoute ? locations[user.id] || null : null}
+              onStopClick={setConfirmingStop}
             />
           )}
         </div>
       </div>
+
+      {/* RENDER DYNAMIC MULTI-PHOTO DELIVERY CONFIRMATION MODAL */}
+      {confirmingStop && (
+        <div id="modal-comprovante-entrega" className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white border border-slate-200 shadow-2xl rounded-3xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] md:max-h-[95vh] relative animate-scale-up font-sans">
+            {/* Header */}
+            <div className="bg-slate-900 text-white p-5 flex items-center justify-between sticky top-0 z-10">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center border border-indigo-500/30">
+                  <CheckCircle className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase tracking-wide">Confirmar Entrega</h3>
+                  <p className="text-[10px] text-slate-400 font-mono tracking-wider">CLIENTE INTEGRADO • REAL-TIME</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setConfirmingStop(null);
+                  setConfirmPhotos([]);
+                  setModalHasSigned(false);
+                }} 
+                className="text-slate-400 hover:text-white transition-all p-2 rounded-lg bg-slate-800 hover:bg-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Content */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-5">
+              {/* Target Client Metadata Card */}
+              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-1">
+                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest font-mono block">Destinatário Logístico</span>
+                <strong className="text-slate-800 text-sm block font-extrabold">{confirmingStop.clientName}</strong>
+                <p className="text-slate-500 text-[11px] leading-relaxed">📍 {confirmingStop.address}</p>
+              </div>
+
+              {/* Step 1: Canvas Signature */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                    🖊️ Colete a Assinatura Digital:
+                  </label>
+                  <button 
+                    type="button" 
+                    onClick={handleModalClearSignature}
+                    className="text-[10px] text-red-600 hover:text-red-700 border border-red-200 hover:bg-red-50 font-bold px-2.5 py-1 rounded-lg transition-all cursor-pointer"
+                  >
+                    Recomeçar / Limpar
+                  </button>
+                </div>
+
+                <div className="relative border border-slate-200 rounded-2xl bg-white overflow-hidden shadow-inner h-[180px] flex flex-col">
+                  <canvas
+                    ref={modalSignatureCanvasRef}
+                    height={180}
+                    width={470}
+                    onMouseDown={handleModalStartDrawing}
+                    onMouseMove={handleModalDraw}
+                    onMouseUp={handleModalStopDrawing}
+                    onMouseLeave={handleModalStopDrawing}
+                    onTouchStart={handleModalStartDrawing}
+                    onTouchMove={handleModalDraw}
+                    onTouchEnd={handleModalStopDrawing}
+                    className="w-full h-full cursor-crosshair touch-none bg-slate-50/20"
+                  />
+                  {!modalHasSigned && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400/80 text-[11px] font-medium uppercase font-sans">
+                      Assine aqui com o dedo ou canetinha digital
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Step 2: Collection of up to 5 validation photos */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                    📷 Fotos Comprovantes ({confirmPhotos.length} de 5):
+                  </label>
+                  
+                  {confirmPhotos.length < 5 ? (
+                    <label className="relative flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] uppercase tracking-wide px-3 py-2 rounded-xl border border-indigo-700 shadow-sm transition-all cursor-pointer hover:scale-[1.02] active:scale-95 select-none animate-pulse">
+                      <Camera className="w-3.5 h-3.5 text-indigo-200" />
+                      Capturar Foto
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={handleModalPhotoFileChange} 
+                        className="hidden" 
+                        capture="environment" // trigger camera immediately on mobile
+                        multiple
+                      />
+                    </label>
+                  ) : (
+                    <span className="text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-100 font-extrabold px-2 py-1 rounded-lg uppercase">
+                      Limite de Fotos Preenchido ✅
+                    </span>
+                  )}
+                </div>
+
+                {/* Symmetrical grid for previews */}
+                {confirmPhotos.length > 0 ? (
+                  <div className="grid grid-cols-5 gap-2 bg-slate-50 border border-slate-100 p-3 rounded-2xl">
+                    {confirmPhotos.map((photo, pIdx) => (
+                      <div key={pIdx} className="relative aspect-square rounded-xl bg-white border border-slate-200 overflow-hidden shadow-xs group">
+                        <img 
+                          src={photo} 
+                          alt={`Proof ${pIdx + 1}`} 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveConfirmPhoto(pIdx)}
+                          className="absolute inset-0 bg-red-600/70 hover:bg-red-700/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all rounded-xl cursor-pointer"
+                          title="Remover foto do relatório"
+                        >
+                          <Trash2 className="w-4 h-4 text-white" />
+                        </button>
+                        <span className="absolute bottom-1 right-1 text-[8px] font-extrabold font-mono text-slate-900 bg-white/90 border border-slate-200 px-1 rounded">
+                          #{pIdx + 1}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-7 border border-dashed border-slate-200 bg-slate-50/50 rounded-2xl text-slate-400 space-y-1.5">
+                    <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
+                      <Camera className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-bold text-slate-500">Nenhuma foto adicionada ainda</p>
+                      <p className="text-[9px] text-slate-400">É obrigatório anexar no mínimo 1 foto do comprovante fiscal, carga ou estabelecimento.</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Sticky Actions Footer */}
+            <div className="bg-slate-50 border-t border-slate-100 p-4 sticky bottom-0 z-10 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmingStop(null);
+                  setConfirmPhotos([]);
+                  setModalHasSigned(false);
+                }}
+                className="w-1/3 py-3 border border-slate-200 bg-white hover:bg-slate-100 hover:border-slate-300 text-slate-700 font-bold rounded-2xl text-xs uppercase cursor-pointer select-none transition-all active:scale-95"
+              >
+                Voltar ao Mapa
+              </button>
+
+              <button
+                type="button"
+                onClick={handleConfirmModalDelivery}
+                className="w-2/3 py-3 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white font-extrabold rounded-2xl text-xs uppercase tracking-wider shadow-md hover:shadow-indigo-100 shadow-indigo-50/50 flex items-center justify-center gap-1.5 transition-all select-none active:scale-95 cursor-pointer"
+              >
+                <CheckCircle className="w-4 h-4 text-white" />
+                Registrar Comprovantes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -11,9 +11,10 @@ interface MapProps {
   rota: Rota | null;
   driverLocation: GPSLocation | null;
   region: string;
+  onStopClick?: (stop: Parada) => void;
 }
 
-export default function InteractiveMap({ rota, driverLocation, region }: MapProps) {
+export default function InteractiveMap({ rota, driverLocation, region, onStopClick }: MapProps) {
   
   // GV1 Region Default Bounding Box
   const boundingDefaults: Record<string, { minLat: number; maxLat: number; minLng: number; maxLng: number }> = {
@@ -171,7 +172,13 @@ export default function InteractiveMap({ rota, driverLocation, region }: MapProp
             const isNextTarget = rota.status === 'active' && index === rota.currentStopIndex;
 
             return (
-              <g key={stop.id} transform={`translate(${x}, ${y})`} className="cursor-pointer">
+              <g 
+                key={stop.id} 
+                transform={`translate(${x}, ${y})`} 
+                className="cursor-pointer group select-none"
+                onClick={() => onStopClick?.(stop)}
+                title={`Clique para confirmar entrega para ${stop.clientName}`}
+              >
                 {/* Ping wave for target stop */}
                 {isNextTarget && (
                   <circle r="16" fill="#f59e0b" stroke="#f59e0b" strokeWidth="2" className="animate-ping opacity-35" />

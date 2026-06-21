@@ -57,6 +57,7 @@ export interface Parada {
   status: 'pending' | 'completed' | 'Chegando';
   signatureUrl?: string; // base64 interactive canvas digital signature
   photoUrl?: string;     // base64 device camera photo proof (fotoconferência)
+  photoUrls?: string[];    // up to 5 digital photos for delivery conference
   completedAt?: string;  // completion ISO timestamp
 }
 
