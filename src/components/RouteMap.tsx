@@ -10,7 +10,7 @@ import { Rota, GPSLocation, Parada, Region, UserRole } from '../types';
 import { INITIAL_REGIONS } from '../mockData';
 import { 
   Truck, MapPin, Navigation, Warehouse, Play, Signal, 
-  Filter, Info, ShieldAlert, CheckCircle2, AlertTriangle, HelpCircle, Layers 
+  Filter, Info, ShieldAlert, CheckCircle2, AlertTriangle, HelpCircle, Layers, Compass
 } from 'lucide-react';
 
 interface SmoothDriverMarkerProps {
@@ -233,6 +233,27 @@ export default function RouteMap({
   const [hoveredDriver, setHoveredDriver] = useState<{ driverName: string; location: GPSLocation; plate: string } | null>(null);
   const [driverFilter, setDriverFilter] = useState<{ [drvId: string]: boolean }>({});
 
+  // Local physical layout fallback states
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+  const [useFallbackMap, setUseFallbackMap] = useState<boolean>(!hasValidKey);
+  const [dashOffset, setDashOffset] = useState<number>(0);
+
+  // Sync fallback view status if credentials change
+  useEffect(() => {
+    setUseFallbackMap(!hasValidKey);
+  }, [hasValidKey]);
+
+  // Vector animation trace
+  useEffect(() => {
+    let animationId: number;
+    const tick = () => {
+      setDashOffset(prev => (prev - 0.4) % 20);
+      animationId = requestAnimationFrame(tick);
+    };
+    animationId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animationId);
+  }, []);
+
   // Sync state if currentUserRegion changes
   useEffect(() => {
     if (currentUserRegion) {
@@ -327,50 +348,7 @@ export default function RouteMap({
     };
   }, [bounds]);
 
-  if (!hasValidKey) {
-    return (
-      <div id="maps-credential-panel" className="bg-gradient-to-br from-slate-900 to-slate-950 text-white rounded-2xl p-8 border border-slate-800 shadow-xl max-w-2xl mx-auto flex flex-col justify-between items-center text-center">
-        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 mb-5 animate-pulse">
-          <ShieldAlert className="w-7 h-7" />
-        </div>
-        
-        <h3 className="text-lg font-extrabold text-slate-100 uppercase tracking-tight">
-          Chave da API do Google Maps Requerida
-        </h3>
-        
-        <p className="text-xs text-slate-400 max-w-md mt-2.5 leading-relaxed">
-          Para visualizar roteamentos reais, polilinhas de vetores, traçados baseados em satélite e pins georreferenciados interativos de telemetria, configure sua credencial do Google Cloud.
-        </p>
 
-        <div className="my-6 p-4 rounded-xl bg-slate-950/80 border border-slate-800/60 text-left w-full space-y-3 font-sans text-xs">
-          <div className="flex items-start gap-2.5">
-            <span className="w-5 h-5 rounded-md bg-blue-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5">1</span>
-            <div>
-              <strong className="text-slate-200">Adquirir Chave do Google Maps Platform</strong>
-              <p className="text-[11px] text-slate-500 mt-0.5">
-                Crie um projeto e gere uma chave de API com as bibliotecas do Maps JavaScript habilitadas: <a href="https://console.cloud.google.com/google/maps-apis/start?utm_campaign=gmp-code-assist-ais" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Iniciar no Console Cloud</a>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-start gap-2.5">
-            <span className="w-5 h-5 rounded-md bg-blue-600 flex items-center justify-center text-[10px] font-bold text-white shrink-0 mt-0.5">2</span>
-            <div>
-              <strong className="text-slate-200">Inserir nos Segredos do AI Studio</strong>
-              <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">
-                Clique na engrenagem de configurações <strong className="text-slate-350">Settings (⚙️)</strong> no canto superior direito do workspace de desenvolvimento, selecione <strong className="text-slate-350">Secrets</strong>, crie uma chave com o nome <code className="bg-slate-805 text-amber-300 font-mono text-[9px] px-1 py-0.5 rounded font-bold">GOOGLE_MAPS_PLATFORM_KEY</code>, insira o valor correspondente e confirme.
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 bg-slate-850/50 border border-slate-800/80 px-4 py-2.5 rounded-lg text-[11px] text-slate-400 font-mono w-full justify-center">
-          <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-ping"></span>
-          AGUARDANDO COMPILAÇÃO REATIVA APÓS ADIÇÃO
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div id="route-google-map-panel" className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[520px]">
@@ -459,13 +437,30 @@ export default function RouteMap({
                 value={mapType}
                 onChange={e => setMapType(e.target.value as any)}
                 className="bg-transparent font-semibold text-slate-700 outline-none"
+                disabled={useFallbackMap}
               >
-                <option value="roadmap">Mapa Padrão</option>
+                <option value="roadmap">Visão do Google</option>
                 <option value="satellite">Visão Satélite</option>
                 <option value="hybrid">Visão Híbrida</option>
                 <option value="terrain">Visão Relevo</option>
               </select>
             </div>
+
+            {/* Google Maps vs Vector fallback toggle button */}
+            {hasValidKey && (
+              <button
+                type="button"
+                onClick={() => setUseFallbackMap(prev => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-semibold select-none transition-all duration-150 cursor-pointer ${
+                  useFallbackMap 
+                    ? 'bg-indigo-650 border-indigo-650 text-white hover:bg-indigo-700' 
+                    : 'bg-white border-slate-250 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Compass className={`w-3.5 h-3.5 ${!useFallbackMap ? 'text-indigo-600' : 'text-white'}`} />
+                <span>{useFallbackMap ? "Exibir Google Maps" : "Exibir Vetor CD"}</span>
+              </button>
+            )}
           </div>
         )}
 
@@ -483,19 +478,428 @@ export default function RouteMap({
         
         {/* Main Google Maps API Canvas */}
         <div className="flex-1 h-full min-h-[300px] bg-slate-100 relative">
-          <APIProvider apiKey={API_KEY} version="weekly">
-            <Map
-              defaultCenter={mapCenter}
-              defaultZoom={singleRouteMode ? 14 : 12}
-              mapTypeId={mapType}
-              mapId="ROUTE_MONITOR_MAP_ID"
-              internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-              style={{ width: '100%', height: '100%' }}
-              gestureHandling="cooperative"
-              disableDefaultUI={false}
+          {useFallbackMap ? (
+            (() => {
+              // Get projected local 2D vector coordinate mapping on custom SVG
+              const getSvgCoords = (lat: number, lng: number) => {
+                if (!bounds) return { x: 400, y: 220 };
+                const latRange = bounds.maxLat - bounds.minLat || 0.01;
+                const lngRange = bounds.maxLng - bounds.minLng || 0.01;
+                // Scale within 800x440 viewBox
+                const x = ((lng - bounds.minLng) / lngRange) * 700 + 50;
+                const y = 390 - (((lat - bounds.minLat) / latRange) * 340) + 25;
+                return { x, y };
+              };
+
+              return (
+                <div className="w-full h-full bg-slate-950 relative overflow-hidden select-none">
+                  {/* Status Info Banner overlay over the vector canvas */}
+                  <div className="absolute top-2.5 right-2 text-white/95 left-2 z-20 pointer-events-auto flex items-center justify-between gap-3 bg-slate-900/95 px-3.5 py-2.5 rounded-xl border border-slate-800 shadow-xl">
+                    <div className="flex items-center gap-2">
+                      {mapLoadError ? (
+                        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 animate-pulse" />
+                      ) : !hasValidKey ? (
+                        <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                      )}
+                      <div className="text-[11px] leading-tight">
+                        <span className="font-bold">
+                          {mapLoadError ? "Back-up: Roteamento Vetorial de Precisão" : !hasValidKey ? "Modo de Back-up Ativado (Sem Chave)" : "Roteamento em Vetor Ativado"}
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          {mapLoadError 
+                             ? "A chave de API inserida retornou erro de acesso (403). Exibindo simulador vetorial." 
+                             : !hasValidKey 
+                             ? "Configurações (⚙️) -> Secrets -> GOOGLE_MAPS_PLATFORM_KEY para ativar Google Maps." 
+                             : "Itinerário geo-espacial construído com vetores de proximidade local em tempo real."}
+                        </p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!hasValidKey && (
+                        <a 
+                          href="https://console.cloud.google.com/google/maps-apis/start?utm_campaign=gmp-code-assist-ais" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded font-bold text-[9px] uppercase tracking-wider transition-colors cursor-pointer"
+                        >
+                          Obter Chave do Google
+                        </a>
+                      )}
+                      {hasValidKey && (
+                        <button
+                          onClick={() => {
+                            setMapLoadError(null);
+                            setUseFallbackMap(false);
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-bold text-[9px] uppercase transition-colors cursor-pointer"
+                        >
+                          Tentar Google Maps
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* SVG background grid lines */}
+                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle, white 1px, transparent 1px)', backgroundSize: '16px 16px' }} />
+                  
+                  <svg className="w-full h-full" viewBox="0 0 800 440" style={{ pointerEvents: 'auto' }}>
+                    {/* Draw grid metrics labels */}
+                    {bounds && (
+                      <g opacity="0.35" className="font-mono text-[8px] fill-slate-500">
+                        <text x="20" y="32">S {bounds.maxLat.toFixed(4)}°</text>
+                        <text x="20" y="418">S {bounds.minLat.toFixed(4)}°</text>
+                        <text x="715" y="418">W {bounds.maxLng.toFixed(4)}°</text>
+                        <text x="24" y="418">W {bounds.minLng.toFixed(4)}°</text>
+                      </g>
+                    )}
+
+                    {/* Render Route Paths */}
+                    {filteredRoutes.map((r, rIdx) => {
+                      const colors = ['#2563eb', '#9333ea', '#db2777', '#0d9488', '#ea580c'];
+                      const routeColor = colors[rIdx % colors.length];
+                      const whCoords = getSvgCoords(r.originLat, r.originLng);
+                      
+                      const pathPoints = [whCoords];
+                      r.stops.forEach(s => {
+                        if (s.lat && s.lng) {
+                          pathPoints.push(getSvgCoords(s.lat, s.lng));
+                        }
+                      });
+
+                      if (pathPoints.length < 2) return null;
+
+                      // Build SVG d route path
+                      const pathD = pathPoints.map((pt, idx) => `${idx === 0 ? 'M' : 'L'} ${pt.x} ${pt.y}`).join(' ');
+
+                      return (
+                        <g key={`fallback-route-${r.id}`}>
+                          {/* Underlying route shadow trail */}
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke={routeColor}
+                            strokeWidth={5}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            opacity={0.15}
+                          />
+                          {/* Animated flow dash paths */}
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke={routeColor}
+                            strokeWidth={2}
+                            strokeDasharray="8,6"
+                            strokeDashoffset={dashOffset}
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </g>
+                      );
+                    })}
+
+                    {/* Render CD warehouse centers */}
+                    {filteredRoutes.map(r => {
+                      const wh = getSvgCoords(r.originLat, r.originLng);
+                      return (
+                        <g key={`fallback-wh-${r.id}`} className="cursor-pointer">
+                          <circle cx={wh.x} cy={wh.y} r={9} fill="#0f172a" stroke="#3b82f6" strokeWidth={2} className="animate-pulse" />
+                          <circle cx={wh.x} cy={wh.y} r={14} fill="none" stroke="#2563eb" strokeWidth={1} opacity={0.25} />
+                          <path d={`M ${wh.x} ${wh.y - 4} L ${wh.x} ${wh.y + 4} M ${wh.x - 4} ${wh.y} L ${wh.x + 4} ${wh.y}`} stroke="#3b82f6" strokeWidth={1.5} />
+                        </g>
+                      );
+                    })}
+
+                    {/* Draw breadcrumbs */}
+                    {singleRouteMode && breadcrumbs && breadcrumbs[singleRouteMode.driverId] && (
+                      breadcrumbs[singleRouteMode.driverId].map((pt, pidx) => {
+                        const pointCoords = getSvgCoords(pt.lat, pt.lng);
+                        const trail = breadcrumbs[singleRouteMode.driverId];
+                        const opacity = Math.max(0.2, (pidx + 1) / trail.length * 0.85);
+                        const scale = Math.max(0.6, (pidx + 1) / trail.length);
+                        return (
+                          <circle 
+                            key={`fallback-bread-${pidx}`}
+                            cx={pointCoords.x}
+                            cy={pointCoords.y}
+                            r={3.5 * scale}
+                            fill="#10b981"
+                            opacity={opacity}
+                            className="pointer-events-none"
+                          />
+                        );
+                      })
+                    )}
+
+                    {!singleRouteMode && breadcrumbs && filteredRoutes.map(r => {
+                      const trail = breadcrumbs[r.driverId];
+                      if (!trail) return null;
+                      return trail.map((pt, pidx) => {
+                        const pointCoords = getSvgCoords(pt.lat, pt.lng);
+                        const opacity = Math.max(0.2, (pidx + 1) / trail.length * 0.75);
+                        const scale = Math.max(0.6, (pidx + 1) / trail.length);
+                        return (
+                          <circle 
+                            key={`fallback-bread-multi-${r.driverId}-${pidx}`}
+                            cx={pointCoords.x}
+                            cy={pointCoords.y}
+                            r={3 * scale}
+                            fill="#6366f1"
+                            opacity={opacity}
+                            className="pointer-events-none"
+                          />
+                        );
+                      });
+                    })}
+
+                    {/* Draw Stops Pins */}
+                    {filteredRoutes.map(r => (
+                      r.stops.map((stop, idx) => {
+                        if (!stop.lat || !stop.lng || isNaN(stop.lat) || isNaN(stop.lng) || (stop.lat === 0 && stop.lng === 0)) return null;
+                        const pt = getSvgCoords(stop.lat, stop.lng);
+                        const isCompleted = stop.status === 'completed';
+                        const isChegando = stop.status === 'Chegando';
+                        const isNextTarget = r.status === 'active' && idx === r.currentStopIndex;
+
+                        const markerColor = isCompleted 
+                          ? '#64748b' 
+                          : isChegando
+                          ? '#10b981'
+                          : isNextTarget 
+                          ? '#f59e0b'
+                          : '#2563eb';
+
+                        const isSelected = selectedStop?.stop?.id === stop.id;
+
+                        return (
+                          <g 
+                            key={`fallback-stop-${stop.id}`} 
+                            className="cursor-pointer group"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedStop({ stop, routeName: r.name });
+                            }}
+                          >
+                            {isChegando && (
+                              <circle cx={pt.x} cy={pt.y} r={14} fill="none" stroke="#10b981" strokeWidth={1} className="animate-ping" style={{ transformOrigin: `${pt.x}px ${pt.y}px` }} />
+                            )}
+                            
+                            {isNextTarget && (
+                              <circle cx={pt.x} cy={pt.y} r={12} fill="none" stroke="#f59e0b" strokeWidth={2} opacity={0.45} className="animate-pulse" />
+                            )}
+
+                            <circle 
+                              cx={pt.x} 
+                              cy={pt.y} 
+                              r={isSelected ? 10 : 7.5} 
+                              fill={markerColor} 
+                              stroke="#ffffff" 
+                              strokeWidth={1.5}
+                              className="transition-all duration-200"
+                              style={{ transformOrigin: `${pt.x}px ${pt.y}px` }}
+                            />
+
+                            <text 
+                              x={pt.x} 
+                              y={pt.y + 3} 
+                              fill="#ffffff" 
+                              className="font-sans font-black text-[8px] select-none pointer-events-none" 
+                              textAnchor="middle"
+                            >
+                              {idx + 1}
+                            </text>
+                          </g>
+                        );
+                      })
+                    ))}
+
+                    {/* Draw Driver Live Markers */}
+                    {singleRouteMode && singleDriverLocation && (
+                      (() => {
+                        const pt = getSvgCoords(singleDriverLocation.lat, singleDriverLocation.lng);
+                        return (
+                          <g 
+                            className="cursor-pointer"
+                            onClick={() => setHoveredDriver({ 
+                              driverName: singleRouteMode.driverName, 
+                              location: singleDriverLocation,
+                              plate: singleRouteMode.driverPlate
+                            })}
+                          >
+                            <circle cx={pt.x} cy={pt.y} r={16} fill="none" stroke="#10b981" strokeWidth={2} opacity={0.3} className="animate-ping" style={{ transformOrigin: `${pt.x}px ${pt.y}px` }} />
+                            <rect x={pt.x - 11} y={pt.y - 11} width={22} height={22} rx={6} fill="#10b981" stroke="#ffffff" strokeWidth={2} className="shadow-lg" />
+                            <svg x={pt.x - 6.5} y={pt.y - 6.5} width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-white">
+                              <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+                              <path d="M19 18h2a1 1 0 0 0 1-1v-5.14a1 1 0 0 0-.29-.71l-3.3-3.3a1 1 0 0 0-.71-.29H14" />
+                              <circle cx="7.5" cy="18.5" r="2.5" />
+                              <circle cx="17.5" cy="18.5" r="2.5" />
+                            </svg>
+                          </g>
+                        );
+                      })()
+                    )}
+
+                    {!singleRouteMode && filteredRoutes.map(r => {
+                      const drvLoc = locations[r.driverId];
+                      if (!drvLoc) return null;
+                      const pt = getSvgCoords(drvLoc.lat, drvLoc.lng);
+                      return (
+                        <g 
+                          key={`fallback-drv-marker-${r.id}`}
+                          className="cursor-pointer"
+                          onClick={() => setHoveredDriver({
+                            driverName: r.driverName,
+                            location: drvLoc,
+                            plate: r.driverPlate
+                          })}
+                        >
+                          <circle cx={pt.x} cy={pt.y} r={14} fill="none" stroke="#6366f1" strokeWidth={2} opacity={0.3} className="animate-ping" style={{ transformOrigin: `${pt.x}px ${pt.y}px` }} />
+                          <rect x={pt.x - 10} y={pt.y - 10} width={20} height={20} rx={5} fill="#4f46e5" stroke="#ffffff" strokeWidth={1.5} className="shadow-lg" />
+                          <svg x={pt.x - 5.5} y={pt.y - 5.5} width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="text-white">
+                            <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+                            <path d="M19 18h2a1 1 0 0 0 1-1v-5.14a1 1 0 0 0-.29-.71l-3.3-3.3a1 1 0 0 0-.71-.29H14" />
+                            <circle cx="7.5" cy="18.5" r="2.5" />
+                            <circle cx="17.5" cy="18.5" r="2.5" />
+                          </svg>
+                          <text x={pt.x} y={pt.y + 17} fill="#c7d2fe" className="font-sans font-bold text-[7.5px]" textAnchor="middle">
+                            {r.driverName.split(' ')[0]}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {/* Absolute InfoWindows in local coordinates absolute alignment */}
+                  {selectedStop && (
+                    (() => {
+                      const pt = getSvgCoords(selectedStop.stop.lat, selectedStop.stop.lng);
+                      return (
+                        <div 
+                          className="absolute bg-slate-900 border border-slate-800 text-white rounded-xl shadow-2xl p-3 text-xs w-60 z-30 font-sans cursor-default transition-all duration-250 pointer-events-auto"
+                          style={{ 
+                            left: `${pt.x}px`, 
+                            top: `${pt.y - 145}px`, 
+                            transform: 'translateX(-50%)'
+                          }}
+                        >
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1.5 font-bold uppercase text-[9px] text-blue-400">
+                            <span className="flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5" />
+                              Ponto de Entrega #{selectedStop.stop.id}
+                            </span>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedStop(null);
+                              }} 
+                              className="hover:text-white text-slate-500 font-black px-1.5 select-none text-[11px] hover:scale-115 transition-transform"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <strong className="text-slate-100 block font-semibold truncate">{selectedStop.stop.clientName}</strong>
+                          <p className="text-[10px] text-slate-400 mt-1 line-clamp-2 leading-tight">{selectedStop.stop.address}</p>
+                          
+                          <div className="mt-2.5 flex items-center justify-between text-[9px] font-mono">
+                            <span className={`px-1.5 py-0.5 rounded font-bold ${selectedStop.stop.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                              {selectedStop.stop.status === 'completed' ? 'CONCLUÍDO ✔' : 'PENDENTE ⏳'}
+                            </span>
+                            <span className="text-slate-500">Rota: {selectedStop.routeName}</span>
+                          </div>
+
+                          {currentUserRole === 2 && selectedStop.stop.status !== 'completed' && onStopClick && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onStopClick(selectedStop.stop);
+                                setSelectedStop(null);
+                              }}
+                              className="mt-3 w-full py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold rounded-lg text-[10px] uppercase shadow-md transition-all active:scale-95 text-center cursor-pointer tracking-wider"
+                            >
+                              Confirmar Entrega
+                            </button>
+                          )}
+                          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 border-r border-b border-slate-800" />
+                        </div>
+                      );
+                    })()
+                  )}
+
+                  {hoveredDriver && (
+                    (() => {
+                      const pt = getSvgCoords(hoveredDriver.location.lat, hoveredDriver.location.lng);
+                      return (
+                        <div 
+                          className="absolute bg-slate-900 border border-slate-800 text-white rounded-xl shadow-2xl p-3 text-xs w-60 z-30 font-sans cursor-default transition-all duration-250 pointer-events-auto"
+                          style={{ 
+                            left: `${pt.x}px`, 
+                            top: `${pt.y - 140}px`, 
+                            transform: 'translateX(-50%)'
+                          }}
+                        >
+                          <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1.5 font-bold uppercase text-[9px] text-emerald-400 font-mono">
+                            <span className="flex items-center gap-1">
+                              <Signal className="w-3 h-3 animate-pulse text-emerald-500" />
+                              Satélite Ativo
+                            </span>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setHoveredDriver(null);
+                              }} 
+                              className="hover:text-white text-slate-500 font-black px-1.5 select-none text-[11px] hover:scale-115 transition-transform"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <strong className="text-slate-100 block font-bold">{hoveredDriver.driverName}</strong>
+                          <p className="text-[10px] text-slate-400 mt-0.5 font-mono">Placa: {hoveredDriver.plate}</p>
+                          
+                          <div className="mt-2.5 bg-slate-950 p-1.5 border border-slate-800/80 rounded-lg grid grid-cols-2 gap-2 text-[9px] font-mono">
+                            <div>
+                              <span className="text-slate-500 block text-[8px] uppercase font-bold">Velocidade</span>
+                              <strong className="text-emerald-400 font-black">{hoveredDriver.location.speed} km/h</strong>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block text-[8px] uppercase font-bold">Rumo GPS</span>
+                              <strong className="text-slate-300 font-semibold">{Math.round(hoveredDriver.location.heading)}°</strong>
+                            </div>
+                          </div>
+                          <p className="text-[8px] text-slate-500 mt-2 text-right">Atualizado: {new Date(hoveredDriver.location.lastUpdated).toLocaleTimeString()}</p>
+                          <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-slate-900 border-r border-b border-slate-800" />
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              );
+            })()
+          ) : (
+            <APIProvider 
+              apiKey={API_KEY} 
+              version="weekly"
+              onError={(err) => {
+                console.warn("APIProvider load error, fallback to vector grid:", err);
+                setMapLoadError(String(err || "Auth error 403 / restricted key"));
+                setUseFallbackMap(true);
+              }}
             >
-              
-              <MapCenterController bounds={bounds} />
+              <Map
+                defaultCenter={mapCenter}
+                defaultZoom={singleRouteMode ? 14 : 12}
+                mapTypeId={mapType}
+                mapId="ROUTE_MONITOR_MAP_ID"
+                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                style={{ width: '100%', height: '100%' }}
+                gestureHandling="cooperative"
+                disableDefaultUI={false}
+              >
+                
+                <MapCenterController bounds={bounds} />
 
               {/* Render Center Warehouse CD Marker for each rendered route */}
               {filteredRoutes.map(r => (
@@ -736,6 +1140,7 @@ export default function RouteMap({
 
             </Map>
           </APIProvider>
+          )}
         </div>
 
         {/* Floating dashboard metadata cards over the map */}
