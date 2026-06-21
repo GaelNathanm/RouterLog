@@ -418,8 +418,16 @@ CREATE TABLE IF NOT EXISTS public.users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL,
+  phone TEXT,
+  address TEXT,
   role INTEGER NOT NULL,
+  status TEXT DEFAULT 'active',
+  "createdAt" TEXT,
   region TEXT,
+  cnh TEXT,
+  "cnhCategory" TEXT,
+  "cnhExpiration" TEXT,
+  "vehicleModel" TEXT,
   plate TEXT,
   "isOnline" BOOLEAN DEFAULT false
 );
@@ -457,6 +465,8 @@ CREATE TABLE IF NOT EXISTS public.rotas (
   "currentStopIndex" INTEGER DEFAULT 0,
   region TEXT NOT NULL,
   "createdAt" TEXT,
+  optimized BOOLEAN DEFAULT false,
+  "sentByGerente" BOOLEAN DEFAULT false,
   stops JSONB
 );
 
@@ -474,6 +484,7 @@ CREATE TABLE IF NOT EXISTS public.chats (
   id TEXT PRIMARY KEY,
   "senderName" TEXT NOT NULL,
   "senderId" TEXT NOT NULL,
+  "senderRole" INTEGER,
   message TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   region TEXT NOT NULL,
@@ -540,4 +551,38 @@ alter publication supabase_realtime add table public.audit_logs;
 alter publication supabase_realtime add table public.performance_logs;
 alter publication supabase_realtime add table public.push_logs;
 alter publication supabase_realtime add table public.clients;
+
+-- ROW LEVEL SECURITY (RLS) POLICIES FOR SECURE PROFILES AND ROUTE PROTECTION
+-- Enable RLS on core tables
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rotas ENABLE ROW LEVEL SECURITY;
+
+-- 1. Policies for 'users': Users can read all users or their own records, can only update themselves
+CREATE POLICY "Permitir leitura pública ou de autenticados de perfis de operadores" 
+  ON public.users FOR SELECT TO authenticated USING (true);
+
+CREATE POLICY "Permitir que usuários editem seu próprio perfil" 
+  ON public.users FOR UPDATE TO authenticated USING (email = auth.jwt()->>'email');
+
+-- 2. Policies for 'rotas' table:
+-- Gerentes e Admins podem selecionar, criar, atualizar ou deletar todas as rotas
+CREATE POLICY "Gerentes e Administradores possuem acesso total às rotas" 
+  ON public.rotas FOR ALL TO authenticated 
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.users 
+      WHERE users.email = auth.jwt()->>'email' 
+        AND (users.role = 0 OR users.role = 1) -- ADMIN (0) ou GERENTE (1)
+    )
+  );
+
+-- Motoristas podem ver apenas rotas em que constem como motorista atribuído (protegendo por perfil)
+CREATE POLICY "Motoristas visualizam apenas rotas atribuídas ao seu próprio perfil" 
+  ON public.rotas FOR SELECT TO authenticated 
+  USING (
+    "driverId" IN (
+      SELECT id FROM public.users 
+      WHERE users.email = auth.jwt()->>'email'
+    )
+  );
 `;

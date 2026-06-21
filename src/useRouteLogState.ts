@@ -122,20 +122,21 @@ export function useRouteLogState() {
     }
   }, [users, currentUser]);
 
-  // Google OAuth callback and session handler
+  // Supabase Auth and unified session handler
   useEffect(() => {
     if (!supabase) return;
 
-    const syncGoogleSession = async (session: any) => {
+    const syncAuthedSession = async (session: any) => {
       if (!session?.user) return;
-      const googleUser = session.user;
-      const email = googleUser.email;
-      const fullName = googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || email?.split('@')[0] || 'Usuário Google';
+      const authUser = session.user;
+      const email = authUser.email;
+      const authId = authUser.id; // Real secure Supabase Auth UUID
+      const fullName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || email?.split('@')[0] || 'Usuário Autenticado';
 
       if (email) {
         let matchedUser: RouteUser | null = null;
         try {
-          const { data, error } = await supabase.from('users').select('*').eq('email', email);
+          const { data, error } = await supabase.from('users').select('*').or(`id.eq.${authId},email.eq.${email}`);
           if (!error && data && data.length > 0) {
             matchedUser = data[0] as RouteUser;
           }
@@ -144,20 +145,21 @@ export function useRouteLogState() {
         }
 
         if (!matchedUser) {
-          matchedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase()) || null;
+          matchedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase() || u.id === authId) || null;
         }
 
         const isAdminEmail = email.toLowerCase() === 'linkalexanderlink@gmail.com' || email.toLowerCase().includes('admin');
 
         if (matchedUser) {
           if (matchedUser.status === 'banned' || matchedUser.status === 'suspended') {
-            console.warn('[Supabase Auth] Google User status is not active:', matchedUser.status);
+            console.warn('[Supabase Auth] User status is not active:', matchedUser.status);
             return;
           }
           if (isAdminEmail && matchedUser.role !== UserRole.ADMIN) {
             console.log('[Supabase Auth] Upgrading user role to ADMIN:', email);
+            const oldId = matchedUser.id;
             const upgradedUser: AdminUser = {
-              id: matchedUser.id,
+              id: authId,
               name: matchedUser.name,
               email: matchedUser.email,
               phone: matchedUser.phone || '',
@@ -168,20 +170,30 @@ export function useRouteLogState() {
             };
             matchedUser = upgradedUser;
             await saveCloudUser(upgradedUser);
-            // Update in local list state
-            setUsers(prev => prev.map(u => u.id === upgradedUser.id ? upgradedUser : u));
+            setUsers(prev => prev.map(u => u.id === oldId ? upgradedUser : u));
+          } else if (matchedUser.id !== authId) {
+            const oldId = matchedUser.id;
+            console.log('[Supabase Auth] Migrating user ID from mock to secure auth UUID:', oldId, '->', authId);
+            await deleteCloudUser(oldId);
+            matchedUser = { ...matchedUser, id: authId };
+            await saveCloudUser(matchedUser);
+
+            // Cascade ID updates to ensure assigned rotas are protected under new RLS settings
+            const affectedRotas = rotas.filter(r => r.driverId === oldId);
+            for (const r of affectedRotas) {
+              await saveCloudRoute({ ...r, driverId: authId });
+            }
           }
-          console.log('[Supabase Auth] Matched existing profile:', matchedUser);
+          console.log('[Supabase Auth] Matched existing operator profile:', matchedUser);
           setCurrentUser(matchedUser);
         } else {
-          // Create new user profile
-          const newUserId = `user_g_${Date.now()}`;
+          // Create new user profile linked with real Auth ID
           const finalRole = isAdminEmail ? UserRole.ADMIN : UserRole.MOTORISTA;
           let newUser: RouteUser;
 
           if (finalRole === UserRole.ADMIN) {
             newUser = {
-              id: newUserId,
+              id: authId,
               name: fullName,
               email: email,
               phone: '',
@@ -192,7 +204,7 @@ export function useRouteLogState() {
             } as AdminUser;
           } else {
             newUser = {
-              id: newUserId,
+              id: authId,
               name: fullName,
               email: email,
               phone: '',
@@ -204,17 +216,17 @@ export function useRouteLogState() {
               cnh: 'GGL-' + Math.floor(100000 + Math.random() * 900000),
               cnhCategory: 'B',
               cnhExpiration: '2030-12-31',
-              vehicleModel: 'Padrão Google',
+              vehicleModel: 'Padrão Real-Auth',
               plate: 'OAU-3921'
             } as MotoristaUser;
           }
 
-          console.log('[Supabase Auth] Creating new Google operator profile in database:', newUser);
+          console.log('[Supabase Auth] Creating new authenticated operator profile in database:', newUser);
           await saveCloudUser(newUser);
           setCurrentUser(newUser);
 
           setUsers(prev => {
-            if (prev.some(u => u.email.toLowerCase() === email.toLowerCase())) return prev;
+            if (prev.some(u => u.email.toLowerCase() === email.toLowerCase() || u.id === authId)) return prev;
             return [...prev, newUser];
           });
         }
@@ -224,33 +236,24 @@ export function useRouteLogState() {
     // Check session on mount
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        syncGoogleSession(session);
+        syncAuthedSession(session);
       }
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       console.log('[Supabase Auth State Changed]:', event, session);
-      if (event === 'SIGNED_IN' && session) {
-        await syncGoogleSession(session);
+      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
+        await syncAuthedSession(session);
       } else if (event === 'SIGNED_OUT') {
-        const localUser = localStorage.getItem('routelog_curr_user');
-        if (localUser) {
-          try {
-            const parsed = JSON.parse(localUser);
-            if (parsed && parsed.id?.startsWith('user_g_')) {
-              setCurrentUser(null);
-            }
-          } catch (e) {
-            // ignore
-          }
-        }
+        setCurrentUser(null);
+        setImpersonatingUser(null);
       }
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, [users]);
+  }, [users, rotas]);
 
   useEffect(() => {
     if (impersonatingUser) {
@@ -845,8 +848,91 @@ export function useRouteLogState() {
   }, [locations, regions, users]);
 
   // Auth Operations
-  const handleLogin = (email: string, role?: UserRole) => {
-    console.log('[Auth Diagnostic] handleLogin triggered:', { email, role });
+  const handleLogin = async (email: string, password?: string, role?: UserRole) => {
+    console.log('[Auth Diagnostic] handleLogin triggered:', { email, password, role });
+    
+    // If Supabase is active and password is provided, try real Supabase authentication first
+    if (supabase && password) {
+      try {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password
+        });
+        if (error) {
+          return { success: false, error: `Erro Supabase Auth: ${error.message}` };
+        }
+        if (data.session?.user) {
+          const profileEmail = data.session.user.email;
+          const authId = data.session.user.id;
+          if (profileEmail) {
+            let matched = users.find(u => u.email.toLowerCase() === profileEmail.toLowerCase() || u.id === authId);
+            if (!matched) {
+              // Try directly to select from database users table
+              const { data: dbUsers, error: dbError } = await supabase.from('users').select('*').or(`id.eq.${authId},email.eq.${profileEmail}`);
+              if (!dbError && dbUsers && dbUsers.length > 0) {
+                matched = dbUsers[0] as RouteUser;
+              }
+            }
+            if (matched) {
+              if (matched.status === 'banned') {
+                return { success: false, error: 'Esta conta foi permanentemente banida da plataforma.' };
+              }
+              if (matched.status === 'suspended') {
+                return { success: false, error: 'Esta conta foi suspensa temporariamente por auditoria.' };
+              }
+              if (matched.id !== authId) {
+                const oldId = matched.id;
+                console.log('[Supabase Auth] Migrating user ID from mock to secure auth UUID on Login:', oldId, '->', authId);
+                await deleteCloudUser(oldId);
+                matched = { ...matched, id: authId };
+                await saveCloudUser(matched);
+
+                // Cascade preassigned routes
+                const affectedRotas = rotas.filter(r => r.driverId === oldId);
+                for (const r of affectedRotas) {
+                  await saveCloudRoute({ ...r, driverId: authId });
+                }
+              }
+              setCurrentUser(matched);
+              setImpersonatingUser(null);
+              return { success: true, user: matched };
+            } else {
+              // Fallback: create dynamic operator profile for this authenticated session
+              const isManagerEmail = profileEmail.toLowerCase().includes('gerente') || profileEmail.toLowerCase().includes('manager');
+              const finalRole = isManagerEmail ? UserRole.GERENTE : UserRole.MOTORISTA;
+              const newUser: RouteUser = {
+                id: authId,
+                name: profileEmail.split('@')[0],
+                email: profileEmail,
+                phone: '',
+                address: '',
+                role: finalRole,
+                status: 'active',
+                createdAt: new Date().toISOString(),
+                region: 'GV1',
+                ...(finalRole === UserRole.MOTORISTA ? {
+                  cnh: 'GGL-' + Math.floor(100000 + Math.random() * 900000),
+                  cnhCategory: 'B',
+                  cnhExpiration: '2030-12-31',
+                  vehicleModel: 'Automático',
+                  plate: 'OAU-3921'
+                } : {})
+              } as any;
+              await saveCloudUser(newUser);
+              setCurrentUser(newUser);
+              setUsers(prev => {
+                if (prev.some(u => u.email.toLowerCase() === profileEmail.toLowerCase() || u.id === authId)) return prev;
+                return [...prev, newUser];
+              });
+              return { success: true, user: newUser };
+            }
+          }
+        }
+      } catch (err: any) {
+        return { success: false, error: `Falha no Supabase: ${err.message}` };
+      }
+    }
+
     if (email === 'admin' || email === 'admin@routelog.com') {
       let admin = users.find(u => u.email.toLowerCase() === 'admin@routelog.com' || u.role === UserRole.ADMIN || String(u.role) === '0' || String(u.role).toUpperCase() === 'ADMIN');
       if (!admin || (admin.role !== UserRole.ADMIN && String(admin.role) !== '0')) {
@@ -881,13 +967,32 @@ export function useRouteLogState() {
       return { success: true, user: matched };
     }
 
-    return { success: false, error: 'Usuário não encontrado. Crie uma conta ou use logins pré-definidos!' };
+    return { success: false, error: 'Usuário não encontrado. Para credenciais reais, forneça uma senha de acesso ou mude para o modo Cadastro.' };
   };
 
-  const handleRegister = (userData: Partial<RouteUser>) => {
-    const id = `user_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+  const handleRegister = async (userData: Partial<RouteUser> & { password?: string }) => {
+    let finalId = `user_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+    // If live Supabase connection is active and password is provided, trigger real credentials signUp
+    if (supabase && userData.password && userData.email) {
+      const { data, error } = await supabase.auth.signUp({
+        email: userData.email,
+        password: userData.password,
+        options: {
+          data: {
+            full_name: userData.name || userData.email.split('@')[0]
+          }
+        }
+      });
+      if (error) {
+        throw new Error(`Erro de Registro no Supabase: ${error.message}`);
+      }
+      if (data.user) {
+        finalId = data.user.id;
+      }
+    }
+
     const newUser = {
-      id,
+      id: finalId,
       name: userData.name || 'Nova Conta',
       email: userData.email || '',
       phone: userData.phone || '',
@@ -907,7 +1012,7 @@ export function useRouteLogState() {
       } : {})
     } as RouteUser;
 
-    saveCloudUser(newUser);
+    await saveCloudUser(newUser);
     setCurrentUser(newUser);
     return newUser;
   };

@@ -326,44 +326,156 @@ export default function ClienteManager({
 
       {/* Datatable Grid */}
       {regionalClients.length > 0 ? (
-        <div className="overflow-x-auto border border-slate-200 rounded-xl shadow-sm bg-white">
-          <table className="w-full text-left border-collapse" id="cm-datatable">
-            <thead>
-              <tr className="bg-slate-100 border-b border-slate-205 text-[10px] text-slate-500 font-extrabold uppercase font-mono tracking-wider select-none">
-                <th className="p-3.5 w-10 text-center">
-                  <input
-                    id="cm-check-all"
-                    type="checkbox"
-                    checked={
-                      filteredClients.length > 0 &&
-                      filteredClients.every(c => checkedClientIds.includes(c.id))
-                    }
-                    onChange={e => {
-                      if (e.target.checked) {
-                        setCheckedClientIds(prev => {
-                          const otherIds = prev.filter(id => !filteredClients.some(fc => fc.id === id));
-                          return [...otherIds, ...filteredClients.map(c => c.id)];
-                        });
-                      } else {
-                        setCheckedClientIds(prev => prev.filter(id => !filteredClients.some(fc => fc.id === id)));
-                      }
-                    }}
-                    className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
-                  />
-                </th>
-                <th className="p-3.5">Cliente</th>
-                <th className="p-3.5">Endereço de Carga/Entrega</th>
-                <th className="p-3.5 text-center">WhatsApp / Contato</th>
-                <th className="p-3.5 text-center">Status</th>
-                <th className="p-3.5 text-center font-mono">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-150 text-[11.5px] text-slate-700">
-              {filteredClients.map(cli => (
-                <tr key={cli.id} className="hover:bg-slate-50/60 transition-colors font-medium">
-                  <td className="p-3.5 text-center">
+        <>
+          {/* Desktop Table View */}
+          <div className="hidden md:block overflow-x-auto border border-slate-200 rounded-xl shadow-sm bg-white">
+            <table className="w-full text-left border-collapse" id="cm-datatable">
+              <thead>
+                <tr className="bg-slate-100 border-b border-slate-205 text-[10px] text-slate-500 font-extrabold uppercase font-mono tracking-wider select-none">
+                  <th className="p-3.5 w-10 text-center">
                     <input
-                      name={`cm-check-${cli.id}`}
+                      id="cm-check-all"
+                      type="checkbox"
+                      checked={
+                        filteredClients.length > 0 &&
+                        filteredClients.every(c => checkedClientIds.includes(c.id))
+                      }
+                      onChange={e => {
+                        if (e.target.checked) {
+                          setCheckedClientIds(prev => {
+                            const otherIds = prev.filter(id => !filteredClients.some(fc => fc.id === id));
+                            return [...otherIds, ...filteredClients.map(c => c.id)];
+                          });
+                        } else {
+                          setCheckedClientIds(prev => prev.filter(id => !filteredClients.some(fc => fc.id === id)));
+                        }
+                      }}
+                      className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
+                    />
+                  </th>
+                  <th className="p-3.5">Cliente</th>
+                  <th className="p-3.5">Endereço de Carga/Entrega</th>
+                  <th className="p-3.5 text-center">WhatsApp / Contato</th>
+                  <th className="p-3.5 text-center">Status</th>
+                  <th className="p-3.5 text-center font-mono">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-150 text-[11.5px] text-slate-700">
+                {filteredClients.map(cli => (
+                  <tr key={cli.id} className="hover:bg-slate-50/60 transition-colors font-medium">
+                    <td className="p-3.5 text-center">
+                      <input
+                        name={`cm-check-${cli.id}`}
+                        type="checkbox"
+                        checked={checkedClientIds.includes(cli.id)}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setCheckedClientIds(prev => [...prev, cli.id]);
+                          } else {
+                            setCheckedClientIds(prev => prev.filter(id => id !== cli.id));
+                          }
+                        }}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
+                      />
+                    </td>
+                    <td className="p-3.5">
+                      <div>
+                        <div className="font-extrabold text-slate-850 text-xs">{cli.name}</div>
+                        <div className="text-[9px] text-slate-400 font-mono mt-0.5">ID: {cli.id}</div>
+                      </div>
+                    </td>
+                    <td className="p-3.5">
+                      <div>
+                        <div className="text-slate-700 font-sans max-w-xs sm:max-w-md truncate font-semibold" title={cli.address}>
+                          {cli.address}
+                        </div>
+                        <div className="text-[9px] text-indigo-600 font-mono mt-0.5 font-bold">
+                          COORDENADAS: {cli.lat.toFixed(6)}, {cli.lng.toFixed(6)}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="p-3.5 text-center">
+                      {cli.whatsApp ? (
+                        <a
+                          href={`https://wa.me/${cli.whatsApp}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-slate-750 hover:text-emerald-700 hover:underline bg-slate-50 hover:bg-emerald-50 border border-slate-205 hover:border-emerald-250 px-2.5 py-1 rounded-xl transition-all"
+                        >
+                          <Phone className="w-3.5 h-3.5 text-emerald-650 shrink-0" /> {cli.whatsApp}
+                        </a>
+                      ) : (
+                        <span className="text-slate-350 italic">Não Informado</span>
+                      )}
+                    </td>
+                    <td className="p-3.5 text-center">
+                      {getStatusBadge(cli.status)}
+                    </td>
+                    <td className="p-3.5">
+                      <div className="flex gap-1.5 justify-center">
+                        <button
+                          name={`cm-edit-${cli.id}`}
+                          type="button"
+                          onClick={() => handleOpenEditClient(cli)}
+                          className="text-indigo-655 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 p-1.5 px-3 rounded-lg font-bold text-[10px] transition-colors uppercase font-mono border border-indigo-100 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="w-3 h-3" /> Editar
+                        </button>
+                        <button
+                          name={`cm-delete-${cli.id}`}
+                          type="button"
+                          onClick={() => triggerDeleteConfirm(cli)}
+                          className="text-rose-655 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 p-1.5 px-3 rounded-lg font-bold text-[10px] transition-colors uppercase font-mono border border-rose-100 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" /> Excluir
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filteredClients.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="text-center py-8 text-slate-400 font-medium">
+                      🔍 Nenhum cliente atende ao critério de busca.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Card-based List View */}
+          <div className="block md:hidden space-y-3" id="cm-mobile-list">
+            <div className="flex items-center justify-between bg-slate-100/80 p-2.5 rounded-xl border border-slate-200 text-[10px] font-bold text-slate-500 font-mono uppercase tracking-wider">
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={
+                    filteredClients.length > 0 &&
+                    filteredClients.every(c => checkedClientIds.includes(c.id))
+                  }
+                  onChange={e => {
+                    if (e.target.checked) {
+                      setCheckedClientIds(prev => {
+                        const otherIds = prev.filter(id => !filteredClients.some(fc => fc.id === id));
+                        return [...otherIds, ...filteredClients.map(c => c.id)];
+                      });
+                    } else {
+                      setCheckedClientIds(prev => prev.filter(id => !filteredClients.some(fc => fc.id === id)));
+                    }
+                  }}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
+                />
+                <span>Marcar Todos</span>
+              </div>
+              <span>Total: {filteredClients.length}</span>
+            </div>
+
+            {filteredClients.map(cli => (
+              <div key={cli.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3 hover:border-indigo-400 transition-colors">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <input
                       type="checkbox"
                       checked={checkedClientIds.includes(cli.id)}
                       onChange={e => {
@@ -373,74 +485,70 @@ export default function ClienteManager({
                           setCheckedClientIds(prev => prev.filter(id => id !== cli.id));
                         }
                       }}
-                      className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4"
+                      className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer h-4 w-4 shrink-0"
                     />
-                  </td>
-                  <td className="p-3.5">
-                    <div>
-                      <div className="font-extrabold text-slate-850 text-xs">{cli.name}</div>
-                      <div className="text-[9px] text-slate-400 font-mono mt-0.5">ID: {cli.id}</div>
+                    <div className="min-w-0">
+                      <span className="block font-extrabold text-slate-850 text-xs truncate">{cli.name}</span>
+                      <span className="block text-[8px] text-slate-400 font-mono mt-0.5">ID: {cli.id}</span>
                     </div>
-                  </td>
-                  <td className="p-3.5">
-                    <div>
-                      <div className="text-slate-700 font-sans max-w-xs sm:max-w-md truncate font-semibold" title={cli.address}>
-                        {cli.address}
-                      </div>
-                      <div className="text-[9px] text-indigo-600 font-mono mt-0.5 font-bold">
-                        COORDENADAS: {cli.lat.toFixed(6)}, {cli.lng.toFixed(6)}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-3.5 text-center">
-                    {cli.whatsApp ? (
-                      <a
-                        href={`https://wa.me/${cli.whatsApp}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-slate-750 hover:text-emerald-700 hover:underline bg-slate-50 hover:bg-emerald-50 border border-slate-205 hover:border-emerald-250 px-2.5 py-1 rounded-xl transition-all"
-                      >
-                        <Phone className="w-3.5 h-3.5 text-emerald-650 shrink-0" /> {cli.whatsApp}
-                      </a>
-                    ) : (
-                      <span className="text-slate-350 italic">Não Informado</span>
-                    )}
-                  </td>
-                  <td className="p-3.5 text-center">
+                  </div>
+                  <div className="shrink-0 scale-90 origin-right">
                     {getStatusBadge(cli.status)}
-                  </td>
-                  <td className="p-3.5">
-                    <div className="flex gap-1.5 justify-center">
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-slate-600 text-xs">
+                  <div>
+                    <span className="text-[9px] text-slate-400 uppercase font-bold block mb-0.5">Endereço de Entrega</span>
+                    <p className="font-semibold text-slate-700 leading-snug">{cli.address}</p>
+                    <span className="text-[8px] text-indigo-600 font-mono font-bold block mt-1">
+                      COORD: {cli.lat.toFixed(6)}, {cli.lng.toFixed(6)}
+                    </span>
+                  </div>
+
+                  <div className="pt-2 flex flex-col sm:flex-row gap-2.5 sm:items-center justify-between border-t border-slate-100">
+                    <div>
+                      {cli.whatsApp ? (
+                        <a
+                          href={`https://wa.me/${cli.whatsApp}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-slate-750 hover:text-emerald-700 hover:underline bg-slate-50 hover:bg-emerald-50 border border-slate-205 hover:border-emerald-250 px-2 rounded-lg py-1 transition-all font-mono text-[10px]"
+                        >
+                          <Phone className="w-3 h-3 text-emerald-600 shrink-0" /> {cli.whatsApp}
+                        </a>
+                      ) : (
+                        <span className="text-slate-350 italic">Sem WhatsApp</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 self-end sm:self-auto">
                       <button
-                        name={`cm-edit-${cli.id}`}
                         type="button"
                         onClick={() => handleOpenEditClient(cli)}
-                        className="text-indigo-650 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 p-1.5 px-3 rounded-lg font-bold text-[10px] transition-colors uppercase font-mono border border-indigo-100 flex items-center gap-1 cursor-pointer"
+                        className="text-indigo-650 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 p-1 rounded-md px-2.5 font-bold text-[9px] transition-colors uppercase font-mono border border-indigo-100 flex items-center gap-0.5 cursor-pointer"
                       >
-                        <Edit3 className="w-3 h-3" /> Editar
+                        <Edit3 className="w-2.5 h-2.5" /> Editar
                       </button>
                       <button
-                        name={`cm-delete-${cli.id}`}
                         type="button"
                         onClick={() => triggerDeleteConfirm(cli)}
-                        className="text-rose-655 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 p-1.5 px-3 rounded-lg font-bold text-[10px] transition-colors uppercase font-mono border border-rose-100 flex items-center gap-1 cursor-pointer"
+                        className="text-rose-655 hover:text-rose-900 bg-rose-50 hover:bg-rose-100 p-1 rounded-md px-2.5 font-bold text-[9px] transition-colors uppercase font-mono border border-rose-100 flex items-center gap-0.5 cursor-pointer"
                       >
-                        <Trash2 className="w-3 h-3" /> Excluir
+                        <Trash2 className="w-2.5 h-2.5" /> Excluir
                       </button>
                     </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredClients.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="text-center py-8 text-slate-400 font-medium">
-                    🔍 Nenhum cliente atende ao critério de busca.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {filteredClients.length === 0 && (
+              <div className="text-center py-6 text-slate-400 font-medium bg-white border border-slate-200 rounded-xl p-4">
+                🔍 Nenhum cliente atende ao critério de busca.
+              </div>
+            )}
+          </div>
+        </>
       ) : (
         <div className="text-center py-10 bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-6">
           <Users className="w-10 h-10 text-slate-300 mx-auto mb-3" />

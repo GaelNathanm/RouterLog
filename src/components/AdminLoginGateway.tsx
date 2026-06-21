@@ -3,7 +3,7 @@ import { ShieldAlert, Compass, Keyboard, Lock, UserCheck, AlertOctagon, HelpCirc
 import { RouteUser } from '../types';
 
 interface AdminLoginGatewayProps {
-  onLogin: (email: string) => { success: boolean; error?: string; user?: RouteUser };
+  onLogin: (email: string, password?: string) => Promise<{ success: boolean; error?: string; user?: RouteUser }> | any;
   onSuccess: () => void;
 }
 
@@ -14,26 +14,25 @@ export default function AdminLoginGateway({ onLogin, onSuccess }: AdminLoginGate
   const [isLoading, setIsLoading] = useState(false);
   const [showHelper, setShowHelper] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setIsLoading(true);
 
-    // Simulate validation
-    setTimeout(() => {
-      if (email !== 'admin@routelog.com' && email !== 'admin') {
-        setErrorMsg('Email inválido para o portal administrativo master.');
-        setIsLoading(false);
-        return;
-      }
+    if (email !== 'admin@routelog.com' && email !== 'admin') {
+      setErrorMsg('Email inválido para o portal administrativo master.');
+      setIsLoading(false);
+      return;
+    }
 
-      if (password !== 'admin2026') {
-        setErrorMsg('Senha administrativa (Master Key) incorreta! Tente "admin2026".');
-        setIsLoading(false);
-        return;
-      }
+    if (password !== 'admin2026') {
+      setErrorMsg('Senha administrativa (Master Key) incorreta! Tente "admin2026".');
+      setIsLoading(false);
+      return;
+    }
 
-      const result = onLogin(email);
+    try {
+      const result = await onLogin(email);
       if (result.success) {
         setIsLoading(false);
         onSuccess();
@@ -41,7 +40,10 @@ export default function AdminLoginGateway({ onLogin, onSuccess }: AdminLoginGate
         setErrorMsg(result.error || 'Erro inesperado na autenticação administrativa.');
         setIsLoading(false);
       }
-    }, 800);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro inesperado na autenticação.');
+      setIsLoading(false);
+    }
   };
 
   const handleReturnToSim = () => {

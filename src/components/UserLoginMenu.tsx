@@ -12,8 +12,8 @@ import GoogleAuthButton from './GoogleAuthButton';
 interface LoginMenuProps {
   users: RouteUser[];
   regions?: Region[];
-  onLogin: (email: string) => { success: boolean; error?: string; user?: RouteUser };
-  onRegister: (data: Partial<RouteUser>) => RouteUser;
+  onLogin: (email: string, password?: string) => Promise<{ success: boolean; error?: string; user?: RouteUser }> | any;
+  onRegister: (data: Partial<RouteUser> & { password?: string }) => Promise<RouteUser> | any;
   onReset: () => void;
   currentUser: RouteUser | null;
   onLogout: () => void;
@@ -23,9 +23,15 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Credentials login states
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+
   // Form states
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [role, setRole] = useState<UserRole>(UserRole.MOTORISTA);
@@ -36,7 +42,7 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
   const [vehicleModel, setVehicleModel] = useState('');
   const [plate, setPlate] = useState('');
 
-  const submitRegister = (e: React.FormEvent) => {
+  const submitRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -45,13 +51,16 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
       return;
     }
 
-    const regData: Partial<RouteUser> = {
+    setIsAuthenticating(true);
+
+    const regData: Partial<RouteUser> & { password?: string } = {
       name,
       email,
       phone,
       address,
       role,
       region,
+      password: password || undefined,
       ...(role === UserRole.MOTORISTA ? {
         cnh,
         cnhCategory,
@@ -61,23 +70,60 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
       } : {})
     };
 
-    onRegister(regData);
-    setIsRegisterMode(false);
-    // Clear form
-    setName('');
-    setEmail('');
-    setPhone('');
-    setAddress('');
-    setCnh('');
-    setVehicleModel('');
-    setPlate('');
+    try {
+      await onRegister(regData);
+      setIsRegisterMode(false);
+      // Clear form
+      setName('');
+      setEmail('');
+      setPassword('');
+      setPhone('');
+      setAddress('');
+      setCnh('');
+      setVehicleModel('');
+      setPlate('');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro ao realizar cadastro.');
+    } finally {
+      setIsAuthenticating(false);
+    }
   };
 
-  const selectPreset = (emailStr: string) => {
+  const selectPreset = async (emailStr: string) => {
     setErrorMsg(null);
-    const result = onLogin(emailStr);
-    if (!result.success) {
-      setErrorMsg(result.error || 'Erro ao realizar login.');
+    setIsAuthenticating(true);
+    try {
+      const result = await onLogin(emailStr);
+      if (!result.success) {
+        setErrorMsg(result.error || 'Erro ao realizar login.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro ao tentar login.');
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
+  const submitCredentialsLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    if (!loginEmail || !loginPassword) {
+      setErrorMsg('Por favor, informe seu email e senha.');
+      return;
+    }
+    setIsAuthenticating(true);
+    try {
+      const result = await onLogin(loginEmail, loginPassword);
+      if (result.success) {
+        setLoginEmail('');
+        setLoginPassword('');
+      } else {
+        setErrorMsg(result.error || 'Credenciais inválidas.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro de autenticação.');
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -301,6 +347,18 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
                 </select>
               </div>
 
+              <div>
+                <label className="block text-slate-500 mb-1">Crie uma Senha (Credenciais Supabase Reais) *</label>
+                <input 
+                  type="password" 
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  placeholder="Mínimo 6 caracteres" 
+                  className="w-full border border-slate-200 p-2 rounded-lg bg-white focus:outline-none focus:border-blue-500" 
+                  required
+                />
+              </div>
+
               {/* PROFILE SPECIFIC - DRIVER CNH & VEHICLE SPECS */}
               {role === UserRole.MOTORISTA && (
                 <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl space-y-2 mt-2">
@@ -373,7 +431,7 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
           <div className="mb-4">
             <span className="text-xs font-bold text-slate-700 block col-span-full">Controle de Sessão Operacional</span>
             <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed font-sans">
-              Autentique-se via Google ou selecione um perfil simulador para acessar o rastreamento e controle logístico.
+              Autentique-se via Google, com Conta Real Supabase, ou selecione um perfil simulador para acessar o rastreamento e controle logístico.
             </p>
           </div>
 
@@ -382,6 +440,36 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
               {errorMsg}
             </div>
           )}
+
+          {/* Real Credentials Login Form */}
+          <form onSubmit={submitCredentialsLogin} className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-sm mb-4 space-y-2.5">
+            <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Acesso Credenciais Reais • Supabase</span>
+            <div className="space-y-1.5">
+              <input 
+                type="email" 
+                placeholder="E-mail Real" 
+                value={loginEmail}
+                onChange={e => setLoginEmail(e.target.value)}
+                className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
+                required
+              />
+              <input 
+                type="password" 
+                placeholder="Senha de Acesso" 
+                value={loginPassword}
+                onChange={e => setLoginPassword(e.target.value)}
+                className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
+                required
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={isAuthenticating}
+              className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase rounded-lg shadow-sm transition-all text-center tracking-wider flex items-center justify-center gap-1 cursor-pointer animate-none"
+            >
+              {isAuthenticating ? 'Autenticando...' : 'Entrar com Conta Real'}
+            </button>
+          </form>
 
           <div className="mb-4">
             <GoogleAuthButton onAuthError={(err) => setErrorMsg(err)} />

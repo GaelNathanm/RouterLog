@@ -4746,14 +4746,50 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
     setModalIsDrawing(false);
   };
 
-  // Reset/draw guidelines on modal signature canvas when confirmingStop changes
+  // Reset/draw guidelines on modal signature canvas when confirmingStop changes and responsive actual dimensions tracking
   useEffect(() => {
+    const handleResize = () => {
+      const modalCanvas = modalSignatureCanvasRef.current;
+      if (modalCanvas && modalCanvas.parentElement) {
+        modalCanvas.width = modalCanvas.parentElement.clientWidth;
+        modalCanvas.height = modalCanvas.parentElement.clientHeight || 180;
+        
+        // redraw guideline:
+        const ctx = modalCanvas.getContext('2d');
+        if (ctx) {
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.moveTo(15, modalCanvas.height - 35);
+          ctx.lineTo(modalCanvas.width - 15, modalCanvas.height - 35);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      const inlineCanvas = signatureCanvasRef.current;
+      if (inlineCanvas && inlineCanvas.parentElement) {
+        inlineCanvas.width = inlineCanvas.parentElement.clientWidth;
+        inlineCanvas.height = inlineCanvas.parentElement.clientHeight || 180;
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    const timer = setTimeout(handleResize, 300);
+
     if (confirmingStop) {
       setTimeout(() => {
+        handleResize();
         handleModalClearSignature();
-      }, 200);
+      }, 350);
     }
-  }, [confirmingStop]);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      clearTimeout(timer);
+    };
+  }, [confirmingStop, activeTab]);
 
   // Handle up to 5 photos additions
   const handleModalPhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -6486,8 +6522,6 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                         <div className="relative border border-slate-250 bg-slate-50/50 rounded-2xl overflow-hidden aspect-[16/9] flex flex-col shadow-inner">
                           <canvas
                             ref={signatureCanvasRef}
-                            width={320}
-                            height={180}
                             onMouseDown={handleStartDrawing}
                             onMouseMove={handleDraw}
                             onMouseUp={handleStopDrawing}
@@ -6716,8 +6750,6 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                 <div className="relative border border-slate-200 rounded-2xl bg-white overflow-hidden shadow-inner h-[180px] flex flex-col">
                   <canvas
                     ref={modalSignatureCanvasRef}
-                    height={180}
-                    width={470}
                     onMouseDown={handleModalStartDrawing}
                     onMouseMove={handleModalDraw}
                     onMouseUp={handleModalStopDrawing}
