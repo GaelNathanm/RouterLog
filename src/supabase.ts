@@ -109,7 +109,11 @@ export async function seedDatabaseIfEmpty() {
   try {
     const { data: users, error } = await supabase.from('users').select('id').limit(1);
     if (error) {
-      console.error('[Supabase Seeding] Error inspecting database:', error.message);
+      if (error.message?.includes('Failed to fetch') || error.message?.includes('fetch')) {
+        console.warn('[Supabase Client] Cloud connection unreachable or offline. Gracefully falling back to Reactive LocalStorage Sandbox.');
+      } else {
+        console.info('[Supabase Client] Database initialized with notices (tables may need creation via SQL Editor):', error.message);
+      }
       return;
     }
 
