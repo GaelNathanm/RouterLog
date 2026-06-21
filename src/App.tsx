@@ -6,12 +6,12 @@
 import React, { useState, useEffect } from 'react';
 import { useRouteLogState } from './useRouteLogState';
 import { UserRole } from './types';
-import UnifiedAuthFlow from './components/UnifiedAuthFlow';
+import UserLoginMenu from './components/UserLoginMenu';
 import TechDocumentation from './components/TechDocumentation';
 import AdminLoginGateway from './components/AdminLoginGateway';
 import ActiveSessionBlocker from './components/ActiveSessionBlocker';
+import { AdminDashboard } from './components/AdminDashboard';
 import { 
-  AdminDashboard, 
   GerenteDashboard, 
   MotoristaDashboard, 
   VendedorDashboard 
@@ -49,6 +49,7 @@ export default function App() {
     handleImpersonate,
     handleModerateUser,
     handleUpdateUser,
+    handleCreateUser,
     handleDeleteUser,
     handleSaveRegion,
     handleDeleteRegion,
@@ -64,6 +65,7 @@ export default function App() {
     setIsDemoSimulationActive
   } = useRouteLogState();
 
+  const [activeTab, setActiveTab] = useState<'simulation' | 'docs'>('simulation');
   const [fcmToast, setFcmToast] = useState<{ title: string; body: string; type: string } | null>(null);
   const [currentPathname, setCurrentPathname] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
 
@@ -99,7 +101,8 @@ export default function App() {
       
       if (activeSessionUser) {
         const matchesRole = role === 'all' || activeSessionUser.role === role;
-        const matchesRegion = region === 'all' || (activeSessionUser as any).region === region || activeSessionUser.role === UserRole.ADMIN;
+        const isUserAdmin = Number(activeSessionUser.role) === UserRole.ADMIN || String(activeSessionUser.role) === '0' || String(activeSessionUser.role).toLowerCase() === 'admin';
+        const matchesRegion = region === 'all' || (activeSessionUser as any).region === region || isUserAdmin;
         
         if (matchesRole && matchesRegion) {
           setFcmToast({ title, body, type });
@@ -115,8 +118,12 @@ export default function App() {
     return () => window.removeEventListener('fcm_notification_received', handleFcm);
   }, [activeSessionUser]);
 
+  const matchesAdminRole = activeSessionUser && (Number(activeSessionUser.role) === UserRole.ADMIN || String(activeSessionUser.role) === '0' || String(activeSessionUser.role).toLowerCase() === 'admin');
+  const matchesGerenteRole = activeSessionUser && (Number(activeSessionUser.role) === UserRole.GERENTE || String(activeSessionUser.role) === '1' || String(activeSessionUser.role).toLowerCase() === 'gerente');
+
   const isWidescreen = activeSessionUser && 
-    (activeSessionUser.role === UserRole.ADMIN || activeSessionUser.role === UserRole.GERENTE);
+    (matchesAdminRole || matchesGerenteRole) && 
+    activeTab !== 'docs';
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
@@ -144,21 +151,14 @@ export default function App() {
 
           {/* Right items: Status + Tabs */}
           <div className="flex flex-col sm:flex-row items-center gap-3.5">
-            {activeSessionUser && (
+            {isWidescreen && activeSessionUser && (
               <div className="flex items-center gap-2.5 bg-slate-100/95 border border-slate-200 px-3 py-1.5 rounded-xl text-xs shadow-sm">
                 <div className="flex flex-col text-right">
                   <span className="font-bold text-slate-800 text-[11px] leading-tight truncate max-w-[150px]">
                     {activeSessionUser.name}
                   </span>
                   <span className="text-[9px] text-[#4f46e5] bg-[#e0e7ff] px-1.5 py-0.5 border border-[#c7d2fe]/50 rounded font-mono font-black leading-none mt-0.5">
-                    {activeSessionUser.role === UserRole.ADMIN 
-                      ? 'ADMIN MASTER' 
-                      : activeSessionUser.role === UserRole.GERENTE 
-                        ? `GERENTE (Região ${ (activeSessionUser as any).region || '' })`
-                        : activeSessionUser.role === UserRole.MOTORISTA
-                          ? 'MOTORISTA'
-                          : 'VENDEDOR'
-                    }
+                    {matchesAdminRole ? 'ADMIN MASTER' : `GERENTE (Região ${ (activeSessionUser as any).region || '' })`}
                   </span>
                 </div>
                 <div className="w-px h-6 bg-slate-300/80"></div>
@@ -174,58 +174,115 @@ export default function App() {
 
             <NetworkGpsStatusWidget />
             
-            {/* Active GPS widget indicator */}
+            {/* Core Master Tabs (Simulation vs Docs) */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-250/20 font-mono text-xs">
+              <button
+                onClick={() => setActiveTab('simulation')}
+                className={`px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 font-bold cursor-pointer ${
+                  activeTab === 'simulation' 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-950 hover:bg-slate-200/50'
+                }`}
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                Painel Operacional
+              </button>
+              <button
+                onClick={() => setActiveTab('docs')}
+                className={`px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 font-bold cursor-pointer ${
+                  activeTab === 'docs' 
+                    ? 'bg-blue-600 text-white shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-950 hover:bg-slate-200/50'
+                }`}
+              >
+                <Network className="w-3.5 h-3.5" />
+                Especificações Técnicas
+              </button>
+            </div>
           </div>
         </div>
       </header>
 
       {/* Main Board Area */}
       <main className={`flex-grow w-full mx-auto p-4 sm:p-6 transition-all duration-300 ${
-        !activeSessionUser 
-          ? 'max-w-xl flex items-center justify-center py-10'
+        currentPathname === '/admin-login'
+          ? 'max-w-2xl justify-center items-center py-10'
           : isWidescreen 
             ? 'max-w-full px-4 sm:px-8 xl:px-10 flex flex-col gap-6' 
-            : 'max-w-7xl flex flex-col gap-6 items-stretch'
+            : 'max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch'
       }`}>
         
-        {!activeSessionUser ? (
-          <UnifiedAuthFlow
-            users={users}
-            regions={regions}
-            onLogin={handleLogin}
-            onRegister={handleRegister}
-            onReset={resetAllData}
-            onLogout={handleLogout}
-          />
+        {currentPathname === '/admin-login' ? (
+          <div className="w-full col-span-full">
+            <AdminLoginGateway
+              onLogin={handleLogin}
+              onSuccess={() => {
+                window.history.pushState({}, '', '/');
+              }}
+            />
+          </div>
         ) : (
-          <div className="w-full flex flex-col h-full">
-
-            {/* SUPERVISOR FLOATING WARNING NOTEPAD */}
-            {impersonatingUser && (
-              <div className="mb-4 bg-slate-900 border border-slate-950 rounded-2xl p-4 text-white shadow-md flex items-center justify-between gap-4 animate-[bounce_1.5s_infinite_1]">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-slate-800 rounded-xl text-yellow-400 border border-slate-705">
-                    <ShieldAlert className="w-4 h-4 ml-0" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-mono text-blue-400 font-bold uppercase tracking-wider block">MODO DE SUPERVISÃO OPERACIONAL ATIVO</span>
-                    <p className="text-xs">
-                      Supervisionando sessão de: <strong className="text-blue-300">{impersonatingUser.name}</strong> ({UserRole[impersonatingUser.role]})
-                    </p>
-                  </div>
+          <>
+            {/* Left Column: Sider Profile login representation (4 columns) */}
+            {!isWidescreen && (
+              <div className="lg:col-span-4 h-full">
+                <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md overflow-hidden flex flex-col h-full min-h-[460px]">
+                  <UserLoginMenu
+                    users={users}
+                    regions={regions}
+                    onLogin={handleLogin}
+                    onRegister={handleRegister}
+                    onReset={resetAllData}
+                    currentUser={currentUser}
+                    onLogout={handleLogout}
+                  />
                 </div>
-
-                <button
-                  onClick={() => handleImpersonate(null)}
-                  className="flex items-center gap-1 text-[11px] font-semibold bg-slate-950 text-slate-350 border border-slate-800 hover:text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                >
-                  <EyeOff className="w-3.5 h-3.5" />
-                  Encerrar Supervisão
-                </button>
               </div>
             )}
 
-            <AnimatePresence mode="wait">
+            {/* Right Column: Dynamic workspace content (8 columns or full width) */}
+            <div className={`${isWidescreen ? 'w-full' : 'lg:col-span-8'} flex flex-col h-full`}>
+
+          {/* SUPERVISOR FLOATING WARNING NOTEPAD */}
+          {impersonatingUser && (
+            <div className="mb-4 bg-slate-900 border border-slate-950 rounded-2xl p-4 text-white shadow-md flex items-center justify-between gap-4 animate-[bounce_1.5s_infinite_1]">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-slate-800 rounded-xl text-yellow-400 border border-slate-705">
+                  <ShieldAlert className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className="text-[10px] font-mono text-blue-400 font-bold uppercase tracking-wider block">MODO DE SUPERVISÃO OPERACIONAL ATIVO</span>
+                  <p className="text-xs">
+                    Supervisionando sessão de: <strong className="text-blue-300">{impersonatingUser.name}</strong> ({UserRole[impersonatingUser.role]})
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => handleImpersonate(null)}
+                className="flex items-center gap-1 text-[11px] font-semibold bg-slate-950 text-slate-350 border border-slate-800 hover:text-white px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                <EyeOff className="w-3.5 h-3.5" />
+                Encerrar Supervisão
+              </button>
+            </div>
+          )}
+
+          <AnimatePresence mode="wait">
+            {activeTab === 'docs' ? (
+              // Tab 2: Technical architecture specs
+              <motion.div
+                key="docs"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                className="flex-1"
+              >
+                <TechDocumentation />
+              </motion.div>
+            ) : (
+              // Tab 1: Real-time simulation board
               <motion.div
                 key="simulation"
                 initial={{ opacity: 0, y: 15 }}
@@ -235,8 +292,9 @@ export default function App() {
                 className="flex-1 bg-white rounded-2xl border border-slate-200/80 shadow-md p-6 flex flex-col h-full min-h-[500px]"
               >
                 
-                {/* LOGGED ROLE INTERACTION COMPONENT */}
-                <div className="flex-1 flex flex-col h-full">
+                {activeSessionUser ? (
+                  // LOGGED ROLE INTERACTION COMPONENT
+                  <div className="flex-1 flex flex-col h-full">
                     
                     {/* Internal Workspace Header Info */}
                     <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-5">
@@ -254,7 +312,7 @@ export default function App() {
 
                     {/* Segment view dashboard based on user role */}
                     <div className="flex-1">
-                      {activeSessionUser.role === UserRole.ADMIN && (
+                      {matchesAdminRole && (
                         <AdminDashboard
                           users={users}
                           rotas={rotas}
@@ -270,6 +328,7 @@ export default function App() {
                           onImpersonate={handleImpersonate}
                           onModerate={handleModerateUser}
                           onUpdateUser={handleUpdateUser}
+                          onCreateUser={handleCreateUser}
                           onDeleteUser={handleDeleteUser}
                           onSaveRegion={handleSaveRegion}
                           onDeleteRegion={handleDeleteRegion}
@@ -278,7 +337,7 @@ export default function App() {
                         />
                       )}
 
-                      {activeSessionUser.role === UserRole.GERENTE && (
+                      {matchesGerenteRole && !matchesAdminRole && (
                         <GerenteDashboard
                           user={activeSessionUser}
                           users={users}
@@ -304,7 +363,7 @@ export default function App() {
                         />
                       )}
 
-                      {activeSessionUser.role === UserRole.MOTORISTA && (
+                      {activeSessionUser && (Number(activeSessionUser.role) === UserRole.MOTORISTA || String(activeSessionUser.role) === '2' || String(activeSessionUser.role).toLowerCase() === 'motorista') && !matchesAdminRole && !matchesGerenteRole && (
                         <MotoristaDashboard
                           user={activeSessionUser}
                           rotas={rotas}
@@ -320,7 +379,7 @@ export default function App() {
                         />
                       )}
 
-                      {activeSessionUser.role === UserRole.VENDEDOR && (
+                      {activeSessionUser && (Number(activeSessionUser.role) === UserRole.VENDEDOR || String(activeSessionUser.role) === '3' || String(activeSessionUser.role).toLowerCase() === 'vendedor') && !matchesAdminRole && !matchesGerenteRole && (
                         <VendedorDashboard
                           user={activeSessionUser}
                           rotas={rotas}
@@ -332,10 +391,48 @@ export default function App() {
                       )}
                     </div>
                   </div>
+                ) : (
+                    // FALLBACK LOGIN BOARD (IF NOT LOGGED)
+                  <div className="flex-1 flex flex-col items-center justify-center text-center p-6 select-text h-full">
+                    <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center text-blue-600 mb-4 border border-blue-100 shadow-sm">
+                      <Compass className="w-7 h-7" />
+                    </div>
+                    
+                    <h3 className="text-lg font-bold text-slate-805">Aguardando Conexão de Operador</h3>
+                    <p className="text-xs text-slate-450 max-w-sm mt-2 leading-relaxed">
+                      Selecione um dos perfis operacionais ativos no painel lateral esquerdo para conectar-se ao fluxo de monitoramento de rotas e despacho de frotas.
+                    </p>
 
-                </motion.div>
-            </AnimatePresence>
-          </div>
+                    <div className="mt-6 pt-5 border-t border-slate-100 w-full max-w-md text-left bg-slate-50 p-4 rounded-xl space-y-2">
+                      <span className="font-semibold text-slate-700 text-[10px] block uppercase tracking-wider">Fluxos de Trabalho Integrados:</span>
+                      <ul className="space-y-1.5 text-[11px] text-slate-500">
+                        <li className="flex items-start gap-1">
+                          <span className="text-emerald-500 font-bold shrink-0">✓</span>
+                          <p><strong>Motorista:</strong> Criação e otimização de rotas multi-paradas com rastreamento GPS ativo durante o trajeto.</p>
+                        </li>
+                        <li className="flex items-start gap-1">
+                          <span className="text-emerald-500 font-bold shrink-0">✓</span>
+                          <p><strong>Gerente:</strong> Monitoramento regional em tempo real das frotas em trânsito com recebimento de geocomparações.</p>
+                        </li>
+                        <li className="flex items-start gap-1">
+                          <span className="text-blue-500 font-bold shrink-0">✓</span>
+                          <p><strong>Vendedor:</strong> Acompanhamento imediato do status do pedido e canal direto de comunicação via chat.</p>
+                        </li>
+                        <li className="flex items-start gap-1">
+                          <span className="text-blue-500 font-bold shrink-0">✓</span>
+                          <p><strong>Administrador:</strong> Supervisão operacional completa com acesso a logs de auditoria e configurações globais de FCM.</p>
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+            </div>
+          </>
         )}
       </main>
 

@@ -15,19 +15,9 @@ import {
 } from './mockData';
 
 // Verify environment variables (supports client-side dynamic loading)
-const urlEnv = (import.meta as any).env.VITE_SUPABASE_URL;
-const keyEnv = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
-
-const isConfigured = !!(
-  urlEnv && 
-  keyEnv && 
-  typeof urlEnv === 'string' && 
-  urlEnv.trim() !== '' && 
-  urlEnv.trim().startsWith('http')
-);
-
-const supabaseUrl = isConfigured ? urlEnv.trim() : '';
-const supabaseAnonKey = isConfigured ? keyEnv.trim() : '';
+const isConfigured = !!((import.meta as any).env.VITE_SUPABASE_URL && (import.meta as any).env.VITE_SUPABASE_ANON_KEY);
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
 
 // Initialize Supabase Client
 export const supabase = isConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null;
@@ -135,7 +125,7 @@ export async function seedDatabaseIfEmpty() {
       
       await supabase.from('chats').insert(INITIAL_CHAT);
       await supabase.from('notifications').insert(INITIAL_NOTIFICATIONS);
-      await supabase.from('logs_audit').insert(INITIAL_AUDIT_LOGS);
+      await supabase.from('audit_logs').insert(INITIAL_AUDIT_LOGS);
       await supabase.from('performance_logs').insert(INITIAL_PERFORMANCE_LOGS);
       await supabase.from('push_logs').insert(INITIAL_PUSH_LOGS);
 
@@ -238,7 +228,7 @@ export async function saveCloudAuditLog(audit: AuditLogEntry) {
   localDB.setItems('auditLogs', prev);
 
   if (isConfigured && supabase) {
-    await supabase.from('logs_audit').upsert(audit as any);
+    await supabase.from('audit_logs').upsert(audit as any);
   }
 }
 
@@ -301,7 +291,7 @@ export async function resetCloudDatabaseAll() {
       await supabase.from('locations').delete().neq('driverId', 'dummy');
       await supabase.from('chats').delete().neq('id', 'dummy');
       await supabase.from('notifications').delete().neq('id', 'dummy');
-      await supabase.from('logs_audit').delete().neq('id', 'dummy');
+      await supabase.from('audit_logs').delete().neq('id', 'dummy');
       await supabase.from('performance_logs').delete().neq('id', 'dummy');
       await supabase.from('push_logs').delete().neq('id', 'dummy');
 
@@ -315,7 +305,7 @@ export async function resetCloudDatabaseAll() {
       
       await supabase.from('chats').insert(INITIAL_CHAT);
       await supabase.from('notifications').insert(INITIAL_NOTIFICATIONS);
-      await supabase.from('logs_audit').insert(INITIAL_AUDIT_LOGS);
+      await supabase.from('audit_logs').insert(INITIAL_AUDIT_LOGS);
       await supabase.from('performance_logs').insert(INITIAL_PERFORMANCE_LOGS);
       await supabase.from('push_logs').insert(INITIAL_PUSH_LOGS);
       
@@ -353,11 +343,10 @@ export function subscribeToCollection<T>(
 
   // Live Supabase real-time channels combined with baseline select fetching
   let active = true;
-  const dbTable = table === 'audit_logs' ? 'logs_audit' : table;
 
   const fetchAndPush = async () => {
     try {
-      const { data, error } = await supabase.from(dbTable).select('*');
+      const { data, error } = await supabase.from(table).select('*');
       if (error) {
         if (onError) onError(new Error(error.message));
         return;
@@ -374,8 +363,8 @@ export function subscribeToCollection<T>(
 
   // Subscribe to table changes via pg channels
   const channel = supabase
-    .channel(`public:${dbTable}`)
-    .on('postgres_changes', { event: '*', schema: 'public', table: dbTable }, () => {
+    .channel(`public:${table}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: table }, () => {
       fetchAndPush();
     })
     .subscribe();
@@ -392,6 +381,16 @@ export function subscribeToCollection<T>(
 export const SUPABASE_SQL_DDL = `-- ROUTELOG POSTGRESQL SCHEMA FOR SUPABASE
 -- Execute this SQL code inside the SQL Editor of your Supabase dashboard to set up all tables instantly.
 
+CREATE TABLE IF NOT EXISTS public.users (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  role INTEGER NOT NULL,
+  region TEXT,
+  plate TEXT,
+  "isOnline" BOOLEAN DEFAULT false
+);
+
 CREATE TABLE IF NOT EXISTS public.regions (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -401,24 +400,6 @@ CREATE TABLE IF NOT EXISTS public.regions (
   radius DOUBLE PRECISION
 );
 
-CREATE TABLE IF NOT EXISTS public.users (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  role INTEGER NOT NULL,
-  region TEXT REFERENCES public.regions(id) ON DELETE SET NULL,
-  plate TEXT,
-  phone TEXT,
-  address TEXT,
-  status TEXT DEFAULT 'active',
-  "createdAt" TEXT,
-  cnh TEXT,
-  "cnhCategory" TEXT,
-  "cnhExpiration" TEXT,
-  "vehicleModel" TEXT,
-  "isOnline" BOOLEAN DEFAULT false
-);
-
 CREATE TABLE IF NOT EXISTS public.rotas (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -426,17 +407,17 @@ CREATE TABLE IF NOT EXISTS public.rotas (
   "originLat" DOUBLE PRECISION NOT NULL,
   "originLng" DOUBLE PRECISION NOT NULL,
   status TEXT NOT NULL,
-  "driverId" TEXT REFERENCES public.users(id) ON DELETE SET NULL,
+  "driverId" TEXT,
   "driverName" TEXT,
   "driverPlate" TEXT,
   "currentStopIndex" INTEGER DEFAULT 0,
-  region TEXT REFERENCES public.regions(id) ON DELETE SET NULL,
+  region TEXT NOT NULL,
   "createdAt" TEXT,
   stops JSONB
 );
 
 CREATE TABLE IF NOT EXISTS public.locations (
-  "driverId" TEXT PRIMARY KEY REFERENCES public.users(id) ON DELETE CASCADE,
+  "driverId" TEXT PRIMARY KEY,
   lat DOUBLE PRECISION NOT NULL,
   lng DOUBLE PRECISION NOT NULL,
   heading DOUBLE PRECISION DEFAULT 0,
@@ -448,34 +429,34 @@ CREATE TABLE IF NOT EXISTS public.locations (
 CREATE TABLE IF NOT EXISTS public.chats (
   id TEXT PRIMARY KEY,
   "senderName" TEXT NOT NULL,
-  "senderId" TEXT REFERENCES public.users(id) ON DELETE SET NULL,
+  "senderId" TEXT NOT NULL,
   message TEXT NOT NULL,
   timestamp TEXT NOT NULL,
-  region TEXT REFERENCES public.regions(id) ON DELETE SET NULL,
+  region TEXT NOT NULL,
   "audioUrl" TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.notifications (
   id TEXT PRIMARY KEY,
-  region TEXT REFERENCES public.regions(id) ON DELETE SET NULL,
+  region TEXT NOT NULL,
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   "senderName" TEXT
 );
 
-CREATE TABLE IF NOT EXISTS public.logs_audit (
+CREATE TABLE IF NOT EXISTS public.audit_logs (
   id TEXT PRIMARY KEY,
   timestamp TEXT NOT NULL,
   action TEXT NOT NULL,
   "userName" TEXT NOT NULL,
   details TEXT,
-  region TEXT REFERENCES public.regions(id) ON DELETE SET NULL
+  region TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.performance_logs (
   id TEXT PRIMARY KEY,
-  "routeId" TEXT REFERENCES public.rotas(id) ON DELETE SET NULL,
+  "routeId" TEXT NOT NULL,
   "routeName" TEXT NOT NULL,
   "driverName" TEXT NOT NULL,
   "driverPlate" TEXT NOT NULL,
@@ -487,7 +468,7 @@ CREATE TABLE IF NOT EXISTS public.performance_logs (
   "completedStopsCount" INTEGER NOT NULL,
   "averageTimePerStopMinutes" INTEGER,
   "routeDeviations" INTEGER DEFAULT 0,
-  region TEXT REFERENCES public.regions(id) ON DELETE SET NULL,
+  region TEXT NOT NULL,
   status TEXT NOT NULL,
   "stopTelemetry" JSONB
 );
@@ -497,31 +478,21 @@ CREATE TABLE IF NOT EXISTS public.push_logs (
   title TEXT NOT NULL,
   body TEXT NOT NULL,
   "targetRole" TEXT,
-  "targetRegion" TEXT REFERENCES public.regions(id) ON DELETE SET NULL,
+  "targetRegion" TEXT,
   "sentCount" INTEGER DEFAULT 1,
   timestamp TEXT NOT NULL,
   success BOOLEAN DEFAULT true,
   type TEXT
 );
 
--- Enable Real-time replication on all matching channels safely (idempotent)
-DO $$
-DECLARE
-  table_names text[] := ARRAY['users', 'regions', 'rotas', 'locations', 'chats', 'notifications', 'logs_audit', 'performance_logs', 'push_logs'];
-  t text;
-BEGIN
-  FOREACH t IN ARRAY table_names LOOP
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_publication_rel pr
-      JOIN pg_class c ON pr.prrelid = c.oid
-      JOIN pg_namespace n ON c.relnamespace = n.oid
-      JOIN pg_publication p ON pr.prpubid = p.oid
-      WHERE p.pubname = 'supabase_realtime'
-        AND n.nspname = 'public'
-        AND c.relname = t
-    ) THEN
-      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t);
-    END IF;
-  END LOOP;
-END $$;
+-- Enable Real-time replication on all matching channels
+alter publication supabase_realtime add table public.users;
+alter publication supabase_realtime add table public.regions;
+alter publication supabase_realtime add table public.rotas;
+alter publication supabase_realtime add table public.locations;
+alter publication supabase_realtime add table public.chats;
+alter publication supabase_realtime add table public.notifications;
+alter publication supabase_realtime add table public.audit_logs;
+alter publication supabase_realtime add table public.performance_logs;
+alter publication supabase_realtime add table public.push_logs;
 `;

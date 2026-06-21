@@ -17,10 +17,13 @@ import RegionalMap from './RegionalMap';
 import RouteMap from './RouteMap';
 import ClientImporter from './ClientImporter';
 import WelcomeTutorial from './WelcomeTutorial';
-import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, ComposedChart, Line } from 'recharts';
-import * as d3 from 'd3';
+import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { saveCloudGPSLocation, SUPABASE_SQL_DDL } from '../supabase';
+
+// Re-export modular AdminDashboard
+export { AdminDashboard } from './AdminDashboard';
+export type { AdminProps } from './AdminDashboard';
 
 // ==========================================
 // CENTRALIZED EXPORT HELPERS (CSV & PDF)
@@ -650,175 +653,7 @@ interface AdminProps {
   ) => PushDeliveryLog;
 }
 
-// ==========================================
-// D3 HEAVY METRICS HEATMAP VISUALIZATION
-// ==========================================
-export function D3RegionalHeatmap({ performanceLogs = [], regions = [] }: { performanceLogs: RoutePerformanceLog[], regions: Region[] }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; visible: boolean; text: string } | null>(null);
-
-  useEffect(() => {
-    if (!svgRef.current || !containerRef.current) return;
-
-    // Clear previous SVG content to avoid duplicating grids on hot reloads
-    d3.select(svgRef.current).selectAll('*').remove();
-
-    // Time buckets represent operating delivery density slots
-    const timeBuckets = ['08h-10h', '10h-12h', '12h-14h', '14h-16h', '16h-18h', '18h-20h'];
-    const regionNames = regions.length > 0 ? regions.map(r => r.id) : ['GV1', 'GV2', 'GV3', 'GV4'];
-
-    const heatmapData: { region: string; time: string; density: number; routeCount: number; stopCount: number }[] = [];
-
-    regionNames.forEach(reg => {
-      timeBuckets.forEach((time, index) => {
-        const regionalRoutes = (performanceLogs || []).filter(p => p.region === reg);
-        const routeCount = regionalRoutes.length;
-        const stopCount = regionalRoutes.reduce((sum, p) => sum + (p.completedStopsCount || 0), 0);
-        
-        let density = 0;
-        if (routeCount > 0) {
-          density = Math.min(10, Math.round((routeCount * 2) + (stopCount * 0.8) + (index === 1 || index === 4 ? 3 : 1)));
-        } else {
-          const baselineHeat = [3, 7, 5, 8, 4, 2];
-          const seed = reg.charCodeAt(0) + reg.charCodeAt(reg.length - 1);
-          density = Math.round((baselineHeat[index] + (seed % 3)) % 10) + 1;
-        }
-
-        heatmapData.push({
-          region: reg,
-          time,
-          density,
-          routeCount: routeCount || Math.round(density / 3) + 1,
-          stopCount: stopCount || Math.round(density * 1.5)
-        });
-      });
-    });
-
-    const margin = { top: 30, right: 30, bottom: 40, left: 70 };
-    const width = containerRef.current.clientWidth - margin.left - margin.right || 450;
-    const height = 180 - margin.top - margin.bottom;
-
-    const svg = d3.select(svgRef.current)
-      .attr('width', width + margin.left + margin.right)
-      .attr('height', height + margin.top + margin.bottom)
-      .append('g')
-      .attr('transform', `translate(${margin.left}, ${margin.top})`);
-
-    const x = d3.scaleBand()
-      .range([0, width])
-      .domain(timeBuckets)
-      .padding(0.05);
-
-    svg.append('g')
-      .attr('transform', `translate(0, ${height})`)
-      .call(d3.axisBottom(x).tickSize(0))
-      .select('.domain').remove();
-
-    svg.selectAll('text')
-      .style('font-size', '9px')
-      .style('font-family', 'ui-monospace, monospace')
-      .style('fill', '#475569');
-
-    const y = d3.scaleBand()
-      .range([height, 0])
-      .domain(regionNames)
-      .padding(0.05);
-
-    svg.append('g')
-      .call(d3.axisLeft(y).tickSize(0))
-      .select('.domain').remove();
-
-    const colorScale = d3.scaleSequential<string>()
-      .interpolator(d3.interpolateRgb('#fff1f2', '#f43f5e'))
-      .domain([0, 10]);
-
-    svg.selectAll()
-      .data(heatmapData, (d: any) => d.region + ':' + d.time)
-      .enter()
-      .append('rect')
-      .attr('x', (d: any) => x(d.time) || 0)
-      .attr('y', (d: any) => y(d.region) || 0)
-      .attr('rx', 4)
-      .attr('ry', 4)
-      .attr('width', x.bandwidth())
-      .attr('height', y.bandwidth())
-      .style('fill', (d: any) => colorScale(d.density))
-      .style('stroke-width', 1.5)
-      .style('stroke', '#ffffff')
-      .style('opacity', 0.9)
-      .style('cursor', 'pointer')
-      .on('mouseover', function(event, d: any) {
-        d3.select(this)
-          .style('stroke', '#1e293b')
-          .style('opacity', 1);
-        
-        const tooltipText = `Região: ${d.region} | Horário: ${d.time} | Densidade de Entregas: ${d.density}/10 | Rotas: ${d.routeCount} | Entregas: ${d.stopCount}`;
-        
-        setTooltip({
-          x: event.clientX,
-          y: event.clientY,
-          visible: true,
-          text: tooltipText
-        });
-      })
-      .on('mousemove', function(event) {
-        setTooltip(prev => prev ? { ...prev, x: event.clientX, y: event.clientY } : null);
-      })
-      .on('mouseleave', function() {
-        d3.select(this)
-          .style('stroke', '#ffffff')
-          .style('opacity', 0.9);
-        setTooltip(null);
-      });
-
-    svg.selectAll()
-      .data(heatmapData)
-      .enter()
-      .append('text')
-      .attr('x', (d: any) => (x(d.time) || 0) + x.bandwidth() / 2)
-      .attr('y', (d: any) => (y(d.region) || 0) + y.bandwidth() / 2 + 3)
-      .attr('text-anchor', 'middle')
-      .text((d: any) => d.density)
-      .style('fill', (d: any) => d.density > 6 ? '#ffffff' : '#4f46e5')
-      .style('font-size', '9px')
-      .style('font-weight', 'bold')
-      .style('font-family', 'sans-serif')
-      .style('pointer-events', 'none');
-
-  }, [performanceLogs, regions]);
-
-  return (
-    <div className="border border-slate-200 rounded-2xl p-4 bg-slate-50 w-full" ref={containerRef}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping" />
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-mono">D3 MAPA DE CALOR: DENSIDADE DE ENTREGAS POR REGIÃO & HORA</span>
-        </div>
-        <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono">
-          <span>BAIXA DENSIDADE</span>
-          <div className="w-16 h-2 bg-gradient-to-r from-rose-50 to-rose-600 rounded" />
-          <span>ALTA DENSIDADE</span>
-        </div>
-      </div>
-      
-      <div className="flex justify-center content-center select-none overflow-x-auto">
-        <svg ref={svgRef} className="overflow-visible min-w-[380px]" />
-      </div>
-
-      {tooltip && tooltip.visible && (
-        <div 
-          className="fixed z-50 bg-slate-900 border border-slate-800 text-white text-[10px] font-mono p-2 rounded-lg shadow-2xl pointer-events-none transform -translate-x-1/2 -translate-y-12 backdrop-blur-sm max-w-[280px]"
-          style={{ left: tooltip.x, top: tooltip.y }}
-        >
-          {tooltip.text}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function AdminDashboard({ 
+function _AdminDashboard({ 
   users, 
   rotas, 
   auditLogs, 
@@ -1729,9 +1564,6 @@ export function AdminDashboard({
                         </div>
                       </div>
                     </div>
-
-                    {/* D3 Regional Heatmap for traffic and delivery density */}
-                    <D3RegionalHeatmap performanceLogs={performanceLogs} regions={regions} />
 
                     {/* Operational Telemetry Tables */}
                     <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
@@ -2887,52 +2719,6 @@ export function GerenteDashboard({
     'Média Minutos/Parada': p.averageTimePerStopMinutes || 15
   }));
 
-  const driverPerformanceChartData = useMemo(() => {
-    const driverGroup: Record<string, { totalDuration: number; durationCount: number; totalEfficiency: number; count: number }> = {};
-    const logsToProcess = regionalPerformance.length > 0 ? regionalPerformance : [];
-
-    logsToProcess.forEach(p => {
-      const drv = p.driverName || 'Motorista';
-      if (!driverGroup[drv]) {
-        driverGroup[drv] = { totalDuration: 0, durationCount: 0, totalEfficiency: 0, count: 0 };
-      }
-      
-      let durationMins = 0;
-      if (p.startTimestamp && p.endTimestamp) {
-        durationMins = (new Date(p.endTimestamp).getTime() - new Date(p.startTimestamp).getTime()) / (1000 * 60);
-      } else if (p.startTimestamp) {
-        durationMins = 120 + (p.averageTimePerStopMinutes || 15) * p.completedStopsCount;
-      } else {
-        durationMins = 90;
-      }
-      
-      const stopProgress = p.completedStopsCount / Math.max(p.plannedStopsCount, 1);
-      const distRatio = p.plannedDistanceKm / Math.max(p.actualDistanceKm, p.plannedDistanceKm, 0.1);
-      const deviationPenalty = p.routeDeviations * 4;
-      const efficiencyScore = Math.max(40, Math.min(100, Math.round((stopProgress * 70) + (distRatio * 30) - deviationPenalty)));
-      
-      driverGroup[drv].totalDuration += durationMins;
-      driverGroup[drv].durationCount += 1;
-      driverGroup[drv].totalEfficiency += efficiencyScore;
-      driverGroup[drv].count += 1;
-    });
-
-    const result = Object.entries(driverGroup).map(([driver, g]) => ({
-      name: driver,
-      'Tempo de Conclusão Médio (m)': Math.round(g.totalDuration / Math.max(g.durationCount, 1)),
-      'Eficiência (%)': Math.round(g.totalEfficiency / g.count)
-    }));
-
-    if (result.length === 0) {
-      return [
-        { name: 'Ana Silva', 'Tempo de Conclusão Médio (m)': 85, 'Eficiência (%)': 94 },
-        { name: 'Carlos Antunes', 'Tempo de Conclusão Médio (m)': 110, 'Eficiência (%)': 88 },
-        { name: 'Marcos Rezende', 'Tempo de Conclusão Médio (m)': 95, 'Eficiência (%)': 91 },
-      ];
-    }
-    return result;
-  }, [regionalPerformance]);
-
   return (
     <div id="gerente-main-panel" className="flex flex-col gap-5 select-text w-full">
       
@@ -3476,6 +3262,20 @@ export function GerenteDashboard({
                       <span>Configurar Supabase</span>
                     </button>
 
+                    {/* Geolocation Simulation Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => setIsDemoSimulationActive?.(!isDemoSimulationActive)}
+                      className={`px-3.5 py-1.5 text-[10.5px] font-extrabold rounded-xl transition-all flex items-center gap-1.5 border cursor-pointer uppercase tracking-wider active:scale-95 ${
+                        isDemoSimulationActive 
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-emerald-50 border-emerald-500/30 shadow-md shadow-emerald-950/40' 
+                          : 'bg-slate-850 hover:bg-slate-800 text-slate-350 border-slate-755'
+                      }`}
+                    >
+                      <Compass className={`w-3.5 h-3.5 text-white ${isDemoSimulationActive ? 'animate-spin' : ''}`} />
+                      <span>Simulador: {isDemoSimulationActive ? 'ATIVO' : 'OFF'}</span>
+                    </button>
+
                     {/* CSV Export Button */}
                     <button
                       type="button"
@@ -3862,7 +3662,7 @@ export function GerenteDashboard({
               {/* High-fidelity Recharts visual boards */}
               {regionalPerformance.length > 0 ? (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Graph A: planned vs actual distance comparison */}
                     <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50">
                       <span className="text-[10px] font-bold text-slate-500 block uppercase tracking-wider mb-2 font-mono">
@@ -3899,27 +3699,6 @@ export function GerenteDashboard({
                             <Area type="monotone" dataKey="Média Minutos/Parada" stroke="#a855f7" fill="#f3e8ff" />
                             <Area type="monotone" dataKey="Desvios Detectados" stroke="#ef4444" fill="#fee2e2" />
                           </AreaChart>
-                        </ResponsiveContainer>
-                      </div>
-                    </div>
-
-                    {/* Graph C: driver average completion time & efficiency dual axis */}
-                    <div className="border border-slate-200 rounded-xl p-3 bg-slate-50/50 md:col-span-2 lg:col-span-1 animate-fadeIn">
-                      <span className="text-[10px] font-bold text-slate-500 block uppercase tracking-wider mb-2 font-mono">
-                        EFICIÊNCIA & TEMPO DE CONCLUSÃO POR MOTORISTA
-                      </span>
-                      <div className="h-44 text-[10px] font-mono">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <ComposedChart data={driverPerformanceChartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                            <XAxis dataKey="name" stroke="#64748b" />
-                            <YAxis yAxisId="left" stroke="#3b82f6" unit="m" />
-                            <YAxis yAxisId="right" orientation="right" stroke="#10b981" unit="%" domain={[0, 100]} />
-                            <Tooltip />
-                            <Legend wrapperStyle={{ fontSize: 9 }} />
-                            <Bar yAxisId="left" dataKey="Tempo de Conclusão Médio (m)" fill="#4f46e5" radius={[4, 4, 0, 0]} />
-                            <Line yAxisId="right" type="monotone" dataKey="Eficiência (%)" stroke="#10b981" strokeWidth={2.5} activeDot={{ r: 6 }} />
-                          </ComposedChart>
                         </ResponsiveContainer>
                       </div>
                     </div>
@@ -5589,51 +5368,41 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             <span className="font-extrabold text-slate-800 text-xs block uppercase tracking-wider">Minhas Rotas ({myCreatedRoutes.length})</span>
 
             <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
-              <AnimatePresence mode="popLayout">
-                {myCreatedRoutes.map(route => (
-                  <motion.div 
-                    key={route.id} 
-                    layout
-                    initial={{ opacity: 0, scale: 0.95, y: 15 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.9, y: -15 }}
-                    transition={{ duration: 0.25, ease: 'easeOut' }}
-                    className="p-4 border border-slate-200 rounded-2xl bg-slate-50/50 space-y-3 shadow-sm"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px]">{route.name}</strong>
-                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
-                        route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                        route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-400'
-                      }`}>
-                        {route.status}
-                      </span>
-                    </div>
+              {myCreatedRoutes.map(route => (
+                <div key={route.id} className="p-4 border border-slate-200 rounded-2xl bg-slate-50/50 space-y-3 shadow-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px]">{route.name}</strong>
+                    <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
+                      route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                      route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-400'
+                    }`}>
+                      {route.status}
+                    </span>
+                  </div>
 
-                    <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
-                    <p className="text-[11px] text-slate-500">🏁 Paradas: <strong className="text-indigo-600 font-extrabold">{route.stops.length} entregas agendadas</strong></p>
+                  <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
+                  <p className="text-[11px] text-slate-500">🏁 Paradas: <strong className="text-indigo-600 font-extrabold">{route.stops.length} entregas agendadas</strong></p>
 
-                    <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
-                      {route.status === 'draft' && (
-                        <button
-                          onClick={() => onStartRoute(route.id)}
-                          className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
-                        >
-                          <Play className="w-4 h-4 fill-white" />
-                          Iniciar Rota
-                        </button>
-                      )}
-
+                  <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
+                    {route.status === 'draft' && (
                       <button
-                        onClick={() => onDeleteRoute(route.id)}
-                        className="p-2.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
+                        onClick={() => onStartRoute(route.id)}
+                        className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
                       >
-                        <Trash2 className="w-4.5 h-4.5" />
+                        <Play className="w-4 h-4 fill-white" />
+                        Iniciar Rota
                       </button>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+                    )}
+
+                    <button
+                      onClick={() => onDeleteRoute(route.id)}
+                      className="p-2.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
+                    >
+                      <Trash2 className="w-4.5 h-4.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
               {myCreatedRoutes.length === 0 && (
                 <div className="text-center py-12 text-slate-400 font-medium">Você não criou nenhuma rota ainda. Use a aba Nova Rota para começar.</div>
               )}
@@ -5850,101 +5619,91 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             ) : (
               // List view of received routes
               <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
-                <AnimatePresence mode="popLayout">
-                  {myReceivedRoutes.map(route => (
-                    <motion.div 
-                      key={route.id} 
-                      layout
-                      initial={{ opacity: 0, scale: 0.95, y: 15 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.9, y: -15 }}
-                      transition={{ duration: 0.25, ease: 'easeOut' }}
-                      className="p-4 border border-slate-200 rounded-2xl bg-emerald-50/25 border-l-4 border-l-emerald-500 space-y-3 shadow-md"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px] block">
-                            {route.name}
-                          </strong>
-                          <span className="text-[9px] text-slate-400 block font-mono">Recebida do Gerente Regional</span>
-                        </div>
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
-                          route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                          route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
-                        }`}>
-                          {route.status}
-                        </span>
+                {myReceivedRoutes.map(route => (
+                  <div key={route.id} className="p-4 border border-slate-200 rounded-2xl bg-emerald-50/25 border-l-4 border-l-emerald-500 space-y-3 shadow-md">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px] block">
+                          {route.name}
+                        </strong>
+                        <span className="text-[9px] text-slate-400 block font-mono">Recebida do Gerente Regional</span>
                       </div>
+                      <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
+                        route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                        route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                      }`}>
+                        {route.status}
+                      </span>
+                    </div>
 
-                      <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
-                      <div className="text-[11px] text-slate-500 mt-1">
-                        <p className="font-bold text-slate-700 mb-1 uppercase text-[9px] tracking-wider">📋 Clientes / Paradas ({route.stops.length}):</p>
-                        <div className="bg-white/80 rounded-xl p-2 border space-y-1 font-sans text-[10.5px] leading-relaxed">
-                          {route.stops.map((st, idx) => (
-                            <motion.div 
-                              key={st.id} 
-                              layout
-                              initial={{ opacity: 0.9, scale: 0.98 }}
-                              animate={{ 
-                                opacity: 1, 
-                                scale: 1,
-                                backgroundColor: st.status === 'completed' ? '#ecfdf5' : st.status === 'Chegando' ? '#fffbeb' : '#ffffff',
-                                color: st.status === 'completed' ? '#065f46' : st.status === 'Chegando' ? '#92400e' : '#334155'
-                              }}
-                              className="flex justify-between items-center px-2 py-1.5 rounded-lg border border-slate-100 gap-1"
-                            >
-                              <span className="truncate max-w-[140px] font-medium">#{idx + 1} {st.clientName}</span>
-                              <span className={`font-mono font-black text-[9px] shrink-0 uppercase border px-1.5 py-0.5 rounded-full leading-none ${
-                                st.status === 'completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                                st.status === 'Chegando' ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-500 border-slate-150'
-                              }`}>
-                                {st.status === 'completed' ? 'CONCLUÍDO ✓' : st.status === 'Chegando' ? 'CHEGANDO 🚚' : 'PENDENTE'}
-                              </span>
-                            </motion.div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
-                        {route.status === 'draft' && (
-                          <button
-                            onClick={() => {
-                              onStartRoute(route.id);
-                              alert(`Rota "${route.name}" iniciada com sucesso! Você pode acompanhar o monitoramento de satélite.`);
+                    <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      <p className="font-bold text-slate-700 mb-1 uppercase text-[9px] tracking-wider">📋 Clientes / Paradas ({route.stops.length}):</p>
+                      <div className="bg-white/80 rounded-xl p-2 border space-y-1 font-sans text-[10.5px] leading-relaxed">
+                        {route.stops.map((st, idx) => (
+                          <motion.div 
+                            key={st.id} 
+                            layout
+                            initial={{ opacity: 0.9, scale: 0.98 }}
+                            animate={{ 
+                              opacity: 1, 
+                              scale: 1,
+                              backgroundColor: st.status === 'completed' ? '#ecfdf5' : st.status === 'Chegando' ? '#fffbeb' : '#ffffff',
+                              color: st.status === 'completed' ? '#065f46' : st.status === 'Chegando' ? '#92400e' : '#334155'
                             }}
-                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                            className="flex justify-between items-center px-2 py-1.5 rounded-lg border border-slate-100 gap-1"
                           >
-                            <Play className="w-3.5 h-3.5 fill-white" />
-                            Iniciar Rota
-                          </button>
-                        )}
-
-                        <button
-                          onClick={() => {
-                            setMEditingRouteId(route.id);
-                            setMEditingRouteName(route.name);
-                            setMEditingRouteOrigin(route.origin);
-                            setMEditingRouteStops(route.stops);
-                          }}
-                          className="py-1.5 px-3 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-xl font-bold transition-all hover:border-indigo-300 cursor-pointer text-xs"
-                        >
-                          Editar
-                        </button>
-
-                        <button
-                          onClick={() => {
-                            if (confirm('Deseja excluir esta rota recebida permanentemente?')) {
-                              onDeleteRoute(route.id);
-                            }
-                          }}
-                          className="p-1.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                            <span className="truncate max-w-[140px] font-medium">#{idx + 1} {st.clientName}</span>
+                            <span className={`font-mono font-black text-[9px] shrink-0 uppercase border px-1.5 py-0.5 rounded-full leading-none ${
+                              st.status === 'completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                              st.status === 'Chegando' ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-500 border-slate-150'
+                            }`}>
+                              {st.status === 'completed' ? 'CONCLUÍDO ✓' : st.status === 'Chegando' ? 'CHEGANDO 🚚' : 'PENDENTE'}
+                            </span>
+                          </motion.div>
+                        ))}
                       </div>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
+                    </div>
+
+                    <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
+                      {route.status === 'draft' && (
+                        <button
+                          onClick={() => {
+                            onStartRoute(route.id);
+                            alert(`Rota "${route.name}" iniciada com sucesso! Você pode acompanhar o monitoramento de satélite.`);
+                          }}
+                          className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" />
+                          Iniciar Rota
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => {
+                          setMEditingRouteId(route.id);
+                          setMEditingRouteName(route.name);
+                          setMEditingRouteOrigin(route.origin);
+                          setMEditingRouteStops(route.stops);
+                        }}
+                        className="py-1.5 px-3 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-xl font-bold transition-all hover:border-indigo-300 cursor-pointer text-xs"
+                      >
+                        Editar
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          if (confirm('Deseja excluir esta rota recebida permanentemente?')) {
+                            onDeleteRoute(route.id);
+                          }
+                        }}
+                        className="p-1.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
                 {myReceivedRoutes.length === 0 && (
                   <div className="text-center py-12 text-slate-400 font-medium">Nenhuma rota enviada pelo gerente regional no momento.</div>
                 )}

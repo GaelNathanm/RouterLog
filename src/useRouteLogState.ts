@@ -14,7 +14,7 @@ import {
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
   ChatMessage, NotificationLog, AuditLogEntry,
-  RoutePerformanceLog, PushDeliveryLog, PushConfig, StopTelemetry, Region
+  RoutePerformanceLog, PushDeliveryLog, PushConfig, StopTelemetry, Region, MotoristaUser, AdminUser
 } from './types';
 import { 
   INITIAL_USERS, INITIAL_ROTAS, INITIAL_LOCATIONS, 
@@ -83,8 +83,15 @@ export function useRouteLogState() {
   const previousGeofenceState = useRef<{ [driverId: string]: { [regionId: string]: boolean } }>({});
   const isGeofenceInitDone = useRef(false);
 
-  // Enterprise production control: simulation is disabled in standard daily use operation
-  const [isDemoSimulationActive, setIsDemoSimulationActive] = useState<boolean>(false);
+  // Enterprise production control: simulation defaults to false in a live app
+  const [isDemoSimulationActive, setIsDemoSimulationActive] = useState<boolean>(() => {
+    const saved = localStorage.getItem('routelog_demo_simulation');
+    return saved === 'true'; // Off by default (false) unless enabled in UI
+  });
+
+  useEffect(() => {
+    localStorage.setItem('routelog_demo_simulation', isDemoSimulationActive ? 'true' : 'false');
+  }, [isDemoSimulationActive]);
 
   // Sync auxiliary states to localStorage as cache
   useEffect(() => {
@@ -113,6 +120,136 @@ export function useRouteLogState() {
       }
     }
   }, [users, currentUser]);
+
+  // Google OAuth callback and session handler
+  useEffect(() => {
+    if (!supabase) return;
+
+    const syncGoogleSession = async (session: any) => {
+      if (!session?.user) return;
+      const googleUser = session.user;
+      const email = googleUser.email;
+      const fullName = googleUser.user_metadata?.full_name || googleUser.user_metadata?.name || email?.split('@')[0] || 'Usuário Google';
+
+      if (email) {
+        let matchedUser: RouteUser | null = null;
+        try {
+          const { data, error } = await supabase.from('users').select('*').eq('email', email);
+          if (!error && data && data.length > 0) {
+            matchedUser = data[0] as RouteUser;
+          }
+        } catch (err) {
+          console.error('[Supabase Auth Check Error]', err);
+        }
+
+        if (!matchedUser) {
+          matchedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase()) || null;
+        }
+
+        const isAdminEmail = email.toLowerCase() === 'linkalexanderlink@gmail.com' || email.toLowerCase().includes('admin');
+
+        if (matchedUser) {
+          if (matchedUser.status === 'banned' || matchedUser.status === 'suspended') {
+            console.warn('[Supabase Auth] Google User status is not active:', matchedUser.status);
+            return;
+          }
+          if (isAdminEmail && matchedUser.role !== UserRole.ADMIN) {
+            console.log('[Supabase Auth] Upgrading user role to ADMIN:', email);
+            const upgradedUser: AdminUser = {
+              id: matchedUser.id,
+              name: matchedUser.name,
+              email: matchedUser.email,
+              phone: matchedUser.phone || '',
+              address: matchedUser.address || '',
+              role: UserRole.ADMIN,
+              status: 'active',
+              createdAt: matchedUser.createdAt || new Date().toISOString()
+            };
+            matchedUser = upgradedUser;
+            await saveCloudUser(upgradedUser);
+            // Update in local list state
+            setUsers(prev => prev.map(u => u.id === upgradedUser.id ? upgradedUser : u));
+          }
+          console.log('[Supabase Auth] Matched existing profile:', matchedUser);
+          setCurrentUser(matchedUser);
+        } else {
+          // Create new user profile
+          const newUserId = `user_g_${Date.now()}`;
+          const finalRole = isAdminEmail ? UserRole.ADMIN : UserRole.MOTORISTA;
+          let newUser: RouteUser;
+
+          if (finalRole === UserRole.ADMIN) {
+            newUser = {
+              id: newUserId,
+              name: fullName,
+              email: email,
+              phone: '',
+              address: '',
+              role: UserRole.ADMIN,
+              status: 'active',
+              createdAt: new Date().toISOString()
+            } as AdminUser;
+          } else {
+            newUser = {
+              id: newUserId,
+              name: fullName,
+              email: email,
+              phone: '',
+              address: '',
+              role: UserRole.MOTORISTA,
+              status: 'active',
+              createdAt: new Date().toISOString(),
+              region: 'GV1',
+              cnh: 'GGL-' + Math.floor(100000 + Math.random() * 900000),
+              cnhCategory: 'B',
+              cnhExpiration: '2030-12-31',
+              vehicleModel: 'Padrão Google',
+              plate: 'OAU-3921'
+            } as MotoristaUser;
+          }
+
+          console.log('[Supabase Auth] Creating new Google operator profile in database:', newUser);
+          await saveCloudUser(newUser);
+          setCurrentUser(newUser);
+
+          setUsers(prev => {
+            if (prev.some(u => u.email.toLowerCase() === email.toLowerCase())) return prev;
+            return [...prev, newUser];
+          });
+        }
+      }
+    };
+
+    // Check session on mount
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        syncGoogleSession(session);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[Supabase Auth State Changed]:', event, session);
+      if (event === 'SIGNED_IN' && session) {
+        await syncGoogleSession(session);
+      } else if (event === 'SIGNED_OUT') {
+        const localUser = localStorage.getItem('routelog_curr_user');
+        if (localUser) {
+          try {
+            const parsed = JSON.parse(localUser);
+            if (parsed && parsed.id?.startsWith('user_g_')) {
+              setCurrentUser(null);
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [users]);
 
   useEffect(() => {
     if (impersonatingUser) {
@@ -281,78 +418,45 @@ export function useRouteLogState() {
     };
   }, []);
 
-  // Supabase Auth Integration and Session Persistence
-  useEffect(() => {
-    if (!supabase) return;
-
-    const checkCurrentSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session && session.user) {
-          const { data: profile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            setCurrentUser(profile as RouteUser);
-          } else {
-            // Self-register in users table if matching auth session exists but user row doesn't
-            const defaultUser = {
-              id: session.user.id,
-              name: session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Operador',
-              email: session.user.email || '',
-              phone: '',
-              address: '',
-              role: UserRole.MOTORISTA,
-              status: 'active',
-              createdAt: new Date().toISOString(),
-              region: 'GV1',
-              cnh: '',
-              cnhCategory: 'B',
-              cnhExpiration: '',
-              vehicleModel: '',
-              plate: ''
-            } as any as RouteUser;
-            await supabase.from('users').upsert(defaultUser as any);
-            setCurrentUser(defaultUser);
-          }
-        }
-      } catch (err) {
-        console.warn('[Supabase Session Sync] Session restoring error:', err);
-      }
-    };
-
-    checkCurrentSession();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      try {
-        if (session && session.user) {
-          const { data: profile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', session.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            setCurrentUser(profile as RouteUser);
-          }
-        } else if (event === 'SIGNED_OUT') {
-          setCurrentUser(null);
-        }
-      } catch (err) {
-        console.error('[Supabase OnAuthStateChange] sync error:', err);
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-
   // Active user represents the current session (can be impersonated)
   const activeSessionUser = impersonatingUser ? impersonatingUser : currentUser;
+
+  // Diagnostic tracing for activeSessionUser role and status
+  useEffect(() => {
+    if (activeSessionUser) {
+      const rawRole = activeSessionUser.role;
+      const roleType = typeof rawRole;
+      const numericRole = Number(rawRole);
+      const isStrictNumberMatch = rawRole === UserRole.ADMIN;
+      const isStringZeroMatch = String(rawRole) === '0';
+      const isStringAdminTextMatch = String(rawRole).toLowerCase() === 'admin';
+      const resolvedIsAdmin = isStrictNumberMatch || isStringZeroMatch || isStringAdminTextMatch;
+
+      console.group('🛡️ [Auth Diagnostic] Active Session Validation');
+      console.log('👤 Profile ID:', activeSessionUser.id);
+      console.log('👤 Profile Name:', activeSessionUser.name);
+      console.log('📬 Profile Email:', (activeSessionUser as any).email || 'No email');
+      console.log('🔑 Raw Role Value:', rawRole);
+      console.log('⚡ Raw Role JS Type:', roleType);
+      console.log('🔢 Parsed Role (Number):', numericRole);
+      console.log('🎯 Expected Admin Enum:', UserRole.ADMIN);
+      console.log('🔍 Strict Type Match (=== 0):', isStrictNumberMatch);
+      console.log('🔍 String "0" Match:', isStringZeroMatch);
+      console.log('🔍 Lowercase "admin" Match:', isStringAdminTextMatch);
+      console.log('🔥 Resolved isAdmin Final Flag:', resolvedIsAdmin);
+      console.log('📋 Resolved Role Name:', UserRole[numericRole] || 'UNDEF');
+      console.groupEnd();
+    } else {
+      console.log('🛡️ [Auth Diagnostic] Active Session status updated: No active session (logged out).');
+    }
+
+    console.log('[Auth Diagnostic] Active Session status brief summary:', {
+      currentUser: currentUser ? { id: currentUser.id, name: currentUser.name, email: currentUser.email, role: currentUser.role, roleName: UserRole[Number(currentUser.role)] } : null,
+      impersonatingUser: impersonatingUser ? { id: impersonatingUser.id, name: impersonatingUser.name, role: impersonatingUser.role } : null,
+      activeSessionUser: activeSessionUser ? { id: activeSessionUser.id, name: activeSessionUser.name, role: activeSessionUser.role, roleName: UserRole[Number(activeSessionUser.role)] } : null,
+      isAdmin: activeSessionUser ? (Number(activeSessionUser.role) === UserRole.ADMIN || String(activeSessionUser.role) === '0' || String(activeSessionUser.role).toLowerCase() === 'admin') : false
+    });
+  }, [currentUser, impersonatingUser, activeSessionUser]);
 
   // Real-time GPS movement simulation
   useEffect(() => {
@@ -729,110 +833,24 @@ export function useRouteLogState() {
   }, [locations, regions, users]);
 
   // Auth Operations
-  const handleLogin = async (email: string, role?: UserRole) => {
-    // Handle special master admin bypass
-    if (email.toLowerCase() === 'adminzte@email.com') {
-      const adminUser = users.find(u => u.email.toLowerCase() === 'adminzte@email.com') || {
-        id: 'admin_master_zte',
-        name: 'Administrador Master ZTE',
-        email: 'adminzte@email.com',
-        phone: '+55 (31) 98888-9999',
-        address: 'Av. Afonso Pena, 1500 - Belo Horizonte, MG',
-        role: UserRole.ADMIN,
-        status: 'active',
-        createdAt: new Date().toISOString()
-      } as RouteUser;
-
-      if (supabase) {
-        try {
-          await saveCloudUser(adminUser);
-        } catch (e) {
-          console.warn('Could not save master admin to cloud database, proceeding local', e);
-        }
-      }
-      setCurrentUser(adminUser);
-      setImpersonatingUser(null);
-      return { success: true, user: adminUser };
-    }
-
-    if (supabase) {
-      try {
-        const defaultPassword = 'Password123!';
-        
-        // Handle special master admin bypass or pre-register check
-        let loginEmail = email;
-        if (email === 'admin' || email === 'admin@routelog.com') {
-          loginEmail = 'admin@routelog.com';
-        }
-
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: loginEmail,
-          password: defaultPassword,
-        });
-
-        if (error) {
-          // If the profile exists in baseline but not in Auth yet, auto-bootstrap Auth registration
-          const matchedUser = users.find(u => u.email.toLowerCase() === loginEmail.toLowerCase());
-          if (matchedUser) {
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-              email: loginEmail,
-              password: defaultPassword,
-              options: {
-                data: { name: matchedUser.name }
-              }
-            });
-            if (!signUpError && signUpData.user) {
-              const updatedUser = { ...matchedUser, id: signUpData.user.id };
-              // Delete old mock record if it was indexed by the old preset id
-              if (matchedUser.id !== signUpData.user.id) {
-                await supabase.from('users').delete().eq('id', matchedUser.id);
-              }
-              await supabase.from('users').upsert(updatedUser as any);
-              setCurrentUser(updatedUser);
-              setImpersonatingUser(null);
-              return { success: true, user: updatedUser };
-            }
-          }
-          return { success: false, error: 'Autenticação Supabase falhou: ' + error.message };
-        }
-
-        if (data && data.user) {
-          const { data: profile } = await supabase
-            .from('users')
-            .select('*')
-            .eq('id', data.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            setCurrentUser(profile as RouteUser);
-            setImpersonatingUser(null);
-            return { success: true, user: profile as RouteUser };
-          } else {
-            // Re-create user profile row for matching credentials if it went missing
-            const matchedUser = users.find(u => u.email.toLowerCase() === loginEmail.toLowerCase()) || {
-              id: data.user.id,
-              name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'Operador',
-              email: loginEmail,
-              role: loginEmail.includes('admin') ? UserRole.ADMIN : UserRole.MOTORISTA,
-              status: 'active',
-              createdAt: new Date().toISOString(),
-              region: 'GV1'
-            };
-            const updatedUser = { ...matchedUser, id: data.user.id };
-            await supabase.from('users').upsert(updatedUser as any);
-            setCurrentUser(updatedUser as any);
-            setImpersonatingUser(null);
-            return { success: true, user: updatedUser as any };
-          }
-        }
-      } catch (err: any) {
-        console.error('Supabase Auth execution error:', err);
-      }
-    }
-
-    // Fallback sandbox simulation if supabase is not initialized
+  const handleLogin = (email: string, role?: UserRole) => {
+    console.log('[Auth Diagnostic] handleLogin triggered:', { email, role });
     if (email === 'admin' || email === 'admin@routelog.com') {
-      const admin = users.find(u => u.role === UserRole.ADMIN) || users[0];
+      let admin = users.find(u => u.email.toLowerCase() === 'admin@routelog.com' || u.role === UserRole.ADMIN || String(u.role) === '0' || String(u.role).toUpperCase() === 'ADMIN');
+      if (!admin || (admin.role !== UserRole.ADMIN && String(admin.role) !== '0')) {
+        console.warn('[Auth Diagnostic] Admin not found dynamically or was incorrectly mapped. Falling back to master admin record.');
+        admin = INITIAL_USERS.find(u => u.role === UserRole.ADMIN) || {
+          id: 'admin_1',
+          name: 'Carlos Oliveira (Super Admin)',
+          email: 'admin@routelog.com',
+          phone: '+55 (31) 98888-1111',
+          address: 'Av. Afonso Pena, 1500 - Belo Horizonte, MG',
+          role: UserRole.ADMIN,
+          status: 'active',
+          createdAt: '2026-01-10T08:00:00Z'
+        };
+      }
+      console.log('[Auth Diagnostic] Setting currentUser to admin:', admin);
       setCurrentUser(admin);
       setImpersonatingUser(null);
       return { success: true, user: admin };
@@ -854,60 +872,12 @@ export function useRouteLogState() {
     return { success: false, error: 'Usuário não encontrado. Crie uma conta ou use logins pré-definidos!' };
   };
 
-  const handleRegister = async (userData: Partial<RouteUser>) => {
-    const tempId = `user_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-    const defaultPassword = 'Password123!';
-    const email = userData.email || '';
-
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.auth.signUp({
-          email: email,
-          password: defaultPassword,
-          options: {
-            data: { name: userData.name || 'Nova Conta' }
-          }
-        });
-
-        if (error) {
-          console.warn('[Supabase Reg Log] Auth signup error occurred (maybe already registered in cognito/auth?):', error.message);
-        }
-
-        const finalId = data?.user?.id || tempId;
-        const newUser = {
-          id: finalId,
-          name: userData.name || 'Nova Conta',
-          email: email,
-          phone: userData.phone || '',
-          address: userData.address || '',
-          role: userData.role ?? UserRole.MOTORISTA,
-          status: 'active',
-          createdAt: new Date().toISOString(),
-          ...(userData.role === UserRole.GERENTE ? { region: (userData as any).region || 'GV1' } : {}),
-          ...(userData.role === UserRole.VENDEDOR ? { region: (userData as any).region || 'GV1' } : {}),
-          ...(userData.role === UserRole.MOTORISTA ? {
-            region: (userData as any).region || 'GV1',
-            cnh: (userData as any).cnh || '',
-            cnhCategory: (userData as any).cnhCategory || 'B',
-            cnhExpiration: (userData as any).cnhExpiration || '',
-            vehicleModel: (userData as any).vehicleModel || '',
-            plate: (userData as any).plate || ''
-          } : {})
-        } as RouteUser;
-
-        await saveCloudUser(newUser);
-        setCurrentUser(newUser);
-        return newUser;
-      } catch (err) {
-        console.error('Supabase registration fail:', err);
-      }
-    }
-
-    // Local Sandbox Mode
-    const newUserLocal = {
-      id: tempId,
+  const handleRegister = (userData: Partial<RouteUser>) => {
+    const id = `user_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+    const newUser = {
+      id,
       name: userData.name || 'Nova Conta',
-      email: email,
+      email: userData.email || '',
       phone: userData.phone || '',
       address: userData.address || '',
       role: userData.role ?? UserRole.MOTORISTA,
@@ -925,21 +895,26 @@ export function useRouteLogState() {
       } : {})
     } as RouteUser;
 
-    saveCloudUser(newUserLocal);
-    setCurrentUser(newUserLocal);
-    return newUserLocal;
+    saveCloudUser(newUser);
+    setCurrentUser(newUser);
+    return newUser;
   };
 
   const handleLogout = async () => {
     if (supabase) {
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.error('Error signing out from Supabase:', err);
+      }
     }
     setCurrentUser(null);
     setImpersonatingUser(null);
   };
 
   const handleImpersonate = async (targetUser: RouteUser | null) => {
-    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
     
     setImpersonatingUser(targetUser);
 
@@ -960,7 +935,8 @@ export function useRouteLogState() {
 
   // Moderation Suite
   const handleModerateUser = async (targetUserId: string, action: 'activate' | 'suspend' | 'ban') => {
-    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
 
     const u = users.find(usr => usr.id === targetUserId);
     if (!u) return;
@@ -984,7 +960,8 @@ export function useRouteLogState() {
   };
 
   const handleUpdateUser = async (updatedUser: RouteUser) => {
-    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
 
     const newAudit: AuditLogEntry = {
       id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
@@ -1001,8 +978,51 @@ export function useRouteLogState() {
     await saveCloudAuditLog(newAudit);
   };
 
+  const handleCreateUser = async (userData: Partial<RouteUser>) => {
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
+
+    const id = `user_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+    const newUser = {
+      id,
+      name: userData.name || 'Nova Conta',
+      email: userData.email || '',
+      phone: userData.phone || '',
+      address: userData.address || '',
+      role: userData.role ?? UserRole.MOTORISTA,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      ...(userData.role === UserRole.GERENTE ? { region: (userData as any).region || 'GV1' } : {}),
+      ...(userData.role === UserRole.VENDEDOR ? { region: (userData as any).region || 'GV1' } : {}),
+      ...(userData.role === UserRole.MOTORISTA ? {
+        region: (userData as any).region || 'GV1',
+        cnh: (userData as any).cnh || '',
+        cnhCategory: (userData as any).cnhCategory || 'B',
+        cnhExpiration: (userData as any).cnhExpiration || '',
+        vehicleModel: (userData as any).vehicleModel || '',
+        plate: (userData as any).plate || ''
+      } : {})
+    } as RouteUser;
+
+    const newAudit: AuditLogEntry = {
+      id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      adminId: currentUser.id,
+      adminName: currentUser.name,
+      action: 'Criar Usuário',
+      targetUserId: newUser.id,
+      targetUserName: newUser.name,
+      details: `Novo usuário ${newUser.name} (${newUser.email}) foi criado pelo Administrador com papel ${UserRole[newUser.role]}.`,
+      timestamp: new Date().toISOString()
+    };
+
+    await saveCloudUser(newUser);
+    await saveCloudAuditLog(newAudit);
+    return newUser;
+  };
+
   const handleDeleteUser = async (targetUserId: string) => {
-    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
 
     const userToDelete = users.find(u => u.id === targetUserId);
     if (!userToDelete) return;
@@ -1027,7 +1047,8 @@ export function useRouteLogState() {
   };
 
   const handleSaveRegion = async (region: Region) => {
-    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
 
     const existing = regions.find(r => r.id === region.id);
     let detailsStr = '';
@@ -1063,7 +1084,8 @@ export function useRouteLogState() {
   };
 
   const handleDeleteRegion = async (regionId: string) => {
-    if (!currentUser || currentUser.role !== UserRole.ADMIN) return;
+    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
+    if (!isUserAdmin) return;
 
     const reg = regions.find(r => r.id === regionId);
     if (!reg) return;
@@ -1399,6 +1421,7 @@ export function useRouteLogState() {
     handleImpersonate,
     handleModerateUser,
     handleUpdateUser,
+    handleCreateUser,
     handleDeleteUser,
     handleSaveRegion,
     handleDeleteRegion,
