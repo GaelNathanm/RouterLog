@@ -14,10 +14,24 @@ import {
   INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
 } from './mockData';
 
-// Verify environment variables (supports client-side dynamic loading)
-const isConfigured = !!((import.meta as any).env.VITE_SUPABASE_URL && (import.meta as any).env.VITE_SUPABASE_ANON_KEY);
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
+// Verify environment variables (supports client-side dynamic loading with auto-sanitization)
+let rawSupabaseUrl = ((import.meta as any).env.VITE_SUPABASE_URL || '').trim();
+let rawSupabaseAnonKey = ((import.meta as any).env.VITE_SUPABASE_ANON_KEY || '').trim();
+
+// Clean up duplicate declarations or copy-paster prefix structures
+if (rawSupabaseUrl.includes('VITE_SUPABASE_URL=')) {
+  rawSupabaseUrl = rawSupabaseUrl.split('VITE_SUPABASE_URL=').pop() || '';
+}
+if (rawSupabaseAnonKey.includes('VITE_SUPABASE_ANON_KEY=')) {
+  rawSupabaseAnonKey = rawSupabaseAnonKey.split('VITE_SUPABASE_ANON_KEY=').pop() || '';
+}
+
+rawSupabaseUrl = rawSupabaseUrl.trim();
+rawSupabaseAnonKey = rawSupabaseAnonKey.trim();
+
+const isConfigured = !!(rawSupabaseUrl && rawSupabaseAnonKey && (rawSupabaseUrl.startsWith('http://') || rawSupabaseUrl.startsWith('https://')));
+const supabaseUrl = rawSupabaseUrl;
+const supabaseAnonKey = rawSupabaseAnonKey;
 
 // Initialize Supabase Client
 export const supabase = isConfigured ? createClient(supabaseUrl, supabaseAnonKey) : null;
