@@ -43,6 +43,9 @@ export default function App() {
     currentUser,
     impersonatingUser,
     activeSessionUser,
+    clients,
+    handleSaveClient,
+    handleDeleteClient,
     handleLogin,
     handleRegister,
     handleLogout,
@@ -350,6 +353,9 @@ export default function App() {
                           pushLogs={pushLogs}
                           pushConfig={pushConfig}
                           regions={regions}
+                          clients={clients}
+                          onSaveClient={handleSaveClient}
+                          onDeleteClient={handleDeleteClient}
                           onPostMessage={handlePostMessage}
                           onPush={dispatchCustomPush}
                           onSendPush={sendSegmentedPush}

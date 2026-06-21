@@ -184,3 +184,16 @@ export interface Region {
   radius?: number; // Geofence radius in meters
 }
 
+export interface Cliente {
+  id: string;
+  name: string;
+  whatsApp: string;
+  address: string;
+  lat: number;
+  lng: number;
+  region: string;
+  createdAt: string;
+  status?: string; // 'active' | 'inactive' | 'pending' or similar for visual indicators
+}
+
+

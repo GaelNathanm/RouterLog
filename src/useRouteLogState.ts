@@ -9,17 +9,17 @@ import {
   saveCloudGPSLocation, saveCloudChat, saveCloudNotification, 
   saveCloudAuditLog, saveCloudPerformanceLog, saveCloudPushLog, 
   resetCloudDatabaseAll, saveCloudRegion, deleteCloudRegion, 
-  subscribeToCollection, deleteCloudUser, supabase
+  subscribeToCollection, deleteCloudUser, supabase, saveCloudClient, deleteCloudClient
 } from './supabase';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
   ChatMessage, NotificationLog, AuditLogEntry,
-  RoutePerformanceLog, PushDeliveryLog, PushConfig, StopTelemetry, Region, MotoristaUser, AdminUser
+  RoutePerformanceLog, PushDeliveryLog, PushConfig, StopTelemetry, Region, MotoristaUser, AdminUser, Cliente
 } from './types';
 import { 
   INITIAL_USERS, INITIAL_ROTAS, INITIAL_LOCATIONS, 
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
-  INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS
+  INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
 } from './mockData';
 
 const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
@@ -52,6 +52,7 @@ export function useRouteLogState() {
   const [performanceLogs, setPerformanceLogs] = useState<RoutePerformanceLog[]>(INITIAL_PERFORMANCE_LOGS);
   const [pushLogs, setPushLogs] = useState<PushDeliveryLog[]>(INITIAL_PUSH_LOGS);
   const [regions, setRegions] = useState<Region[]>(INITIAL_REGIONS);
+  const [clients, setClients] = useState<Cliente[]>(INITIAL_CLIENTS);
 
   const [pushConfig, setPushConfig] = useState<PushConfig>(() => {
     const saved = localStorage.getItem('routelog_push_config');
@@ -402,9 +403,20 @@ export function useRouteLogState() {
         console.warn('[Supabase Sync Offline] Regions subscription currently unavailable (working with offline/cache data):', err.message);
       });
 
+      // Subscribe to clients with resilient error handling
+      const unsubClients = subscribeToCollection<Cliente>('clients', (list) => {
+        if (list.length > 0) {
+          setClients(list);
+        } else {
+          setClients(INITIAL_CLIENTS);
+        }
+      }, (err) => {
+        console.warn('[Supabase Sync Offline] Clients subscription currently unavailable (working with offline/cache data):', err.message);
+      });
+
       unsubsRef.current = [
         unsubUsers, unsubRotas, unsubLocations, unsubChats, 
-        unsubNotifs, unsubAudits, unsubPerformance, unsubPushLogs, unsubRegions
+        unsubNotifs, unsubAudits, unsubPerformance, unsubPushLogs, unsubRegions, unsubClients
       ];
     };
 
@@ -1105,6 +1117,41 @@ export function useRouteLogState() {
     await saveCloudAuditLog(newAudit);
   };
 
+  const handleSaveClient = async (client: Cliente) => {
+    await saveCloudClient(client);
+
+    const newAudit: AuditLogEntry = {
+      id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      adminId: activeSessionUser?.id || 'system',
+      adminName: activeSessionUser?.name || 'Sistema',
+      action: clients.some(c => c.id === client.id) ? 'Cliente Atualizado' : 'Cliente Criado',
+      targetUserId: 'client_' + client.id,
+      targetUserName: client.name,
+      details: `Cliente ${client.name} no endereço "${client.address}" foi salvo no banco de clientes.`,
+      timestamp: new Date().toISOString()
+    };
+    await saveCloudAuditLog(newAudit);
+  };
+
+  const handleDeleteClient = async (clientId: string) => {
+    const matched = clients.find(c => c.id === clientId);
+    if (!matched) return;
+
+    await deleteCloudClient(clientId);
+
+    const newAudit: AuditLogEntry = {
+      id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      adminId: activeSessionUser?.id || 'system',
+      adminName: activeSessionUser?.name || 'Sistema',
+      action: 'Cliente Removido',
+      targetUserId: 'client_' + clientId,
+      targetUserName: matched.name,
+      details: `Cliente ${matched.name} foi removido do banco de clientes.`,
+      timestamp: new Date().toISOString()
+    };
+    await saveCloudAuditLog(newAudit);
+  };
+
   const dispatchCustomPush = async (title: string, body: string, selectedRegion: string) => {
     const sender = activeSessionUser?.name || 'Administrador';
     const newNotif: NotificationLog = {
@@ -1426,6 +1473,9 @@ export function useRouteLogState() {
     handleSaveRegion,
     handleDeleteRegion,
     dispatchCustomPush,
+    clients,
+    handleSaveClient,
+    handleDeleteClient,
     handleCreateRoute,
     handleUpdateRoute,
     handleDeleteRoute,

@@ -4,18 +4,19 @@
  */
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region } from '../types';
+import { UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region, Cliente } from '../types';
 import { 
   Users, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
   Trash2, AlertCircle, Share2, Navigation, CheckCircle, Send, MessageSquare, 
   UserCheck, ShieldAlert, Ban, Info, Sparkles, Plus, Map, Play, Check, Phone, ArrowRight, Edit, Pencil,
   Route, Compass, Bell, Settings, Layers, Calendar, BarChart3, Clock, AlertOctagon, HelpCircle, Truck, Signal,
-  Download, Printer, Mic, Square, Pause, Volume2, SlidersHorizontal, Camera, RefreshCw, X, FileSpreadsheet
+  Download, Printer, Mic, Square, Pause, Volume2, SlidersHorizontal, Camera, RefreshCw, X, FileSpreadsheet, Search
 } from 'lucide-react';
 import InteractiveMap from './InteractiveMap';
 import RegionalMap from './RegionalMap';
 import RouteMap from './RouteMap';
 import ClientImporter from './ClientImporter';
+import ClienteManager from './ClienteManager';
 import WelcomeTutorial from './WelcomeTutorial';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
@@ -2347,6 +2348,9 @@ interface GerenteProps {
   pushLogs: PushDeliveryLog[];
   pushConfig: PushConfig;
   regions: Region[];
+  clients?: Cliente[];
+  onSaveClient?: (client: Cliente) => void;
+  onDeleteClient?: (id: string) => void;
   onPostMessage: (text: string, audioUrl?: string) => void;
   onPush: (title: string, body: string, region: string) => void;
   onSendPush: (
@@ -2377,6 +2381,9 @@ export function GerenteDashboard({
   pushLogs, 
   pushConfig, 
   regions,
+  clients = [],
+  onSaveClient,
+  onDeleteClient,
   onPostMessage, 
   onPush, 
   onSendPush,
@@ -2481,6 +2488,176 @@ export function GerenteDashboard({
   const [gIsValidated, setGIsValidated] = useState(false);
   const [gEditingRouteId, setGEditingRouteId] = useState<string | null>(null);
 
+  // Client Management States
+  const [clientSubTab, setClientSubTab] = useState<'database' | 'planner'>('database');
+  const [clientsSearch, setClientsSearch] = useState('');
+  const [checkedClientIds, setCheckedClientIds] = useState<string[]>([]);
+  
+  // Client CRUD Modal States
+  const [isClientModalOpen, setIsClientModalOpen] = useState(false);
+  const [cEditingClient, setCEditingClient] = useState<Cliente | null>(null);
+  const [cFormName, setCFormName] = useState('');
+  const [cFormWhatsApp, setCFormWhatsApp] = useState('');
+  const [cFormAddress, setCFormAddress] = useState('');
+  const [cFormLat, setCFormLat] = useState<number>(-20.302534);
+  const [cFormLng, setCFormLng] = useState<number>(-40.401630);
+  const [cFormAddressPredictions, setCEAddrPredictions] = useState<{ description: string; placeId: string }[]>([]);
+  const [cFormIsValidated, setCFormIsValidated] = useState(false);
+
+  const cFetchAddressPredictions = (inputStr: string) => {
+    if (!inputStr || inputStr.trim().length < 3) {
+      setCEAddrPredictions([]);
+      return;
+    }
+    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps && (window as any).google.maps.places) {
+      try {
+        const service = new (window as any).google.maps.places.AutocompleteService();
+        service.getPlacePredictions(
+          { input: inputStr, componentRestrictions: { country: 'br' } },
+          (predictions: any, status: any) => {
+            if (status === 'OK' && predictions) {
+              setCEAddrPredictions(
+                predictions.map((p: any) => ({
+                  description: p.description,
+                  placeId: p.place_id,
+                }))
+              );
+            } else {
+              setCEAddrPredictions([]);
+            }
+          }
+        );
+      } catch (e) {
+        console.warn('Client autocomp fail:', e);
+      }
+    }
+  };
+
+  const cHandleSelectPrediction = (address: string, placeId: string) => {
+    setCFormAddress(address);
+    setCEAddrPredictions([]);
+    setCFormIsValidated(true);
+    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps) {
+      try {
+        const geocoder = new (window as any).google.maps.Geocoder();
+        geocoder.geocode({ placeId: placeId }, (results: any, status: any) => {
+          if (status === 'OK' && results && results[0]) {
+            const loc = results[0].geometry.location;
+            setCFormLat(loc.lat());
+            setCFormLng(loc.lng());
+          }
+        });
+      } catch (err) {
+        console.warn('Client form geocoder failed:', err);
+      }
+    }
+  };
+
+  const handleSaveClientForm = () => {
+    if (!cFormName || !cFormAddress) {
+      alert('Favor preencher o Nome e Endereço do Cliente.');
+      return;
+    }
+    const cleanPhone = cFormWhatsApp.replace(/\D/g, '');
+
+    const clientData: Cliente = {
+      id: cEditingClient ? cEditingClient.id : `cli_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      name: cFormName,
+      whatsApp: cleanPhone || '5533999999999',
+      address: cFormAddress,
+      lat: cFormLat,
+      lng: cFormLng,
+      region,
+      createdAt: cEditingClient ? cEditingClient.createdAt : new Date().toISOString()
+    };
+
+    if (onSaveClient) {
+      onSaveClient(clientData);
+    }
+    setIsClientModalOpen(false);
+    setCEditingClient(null);
+    setCFormName('');
+    setCFormWhatsApp('');
+    setCFormAddress('');
+  };
+
+  const handleOpenEditClient = (cli: Cliente) => {
+    setCEditingClient(cli);
+    setCFormName(cli.name);
+    setCFormWhatsApp(cli.whatsApp);
+    setCFormAddress(cli.address);
+    setCFormLat(cli.lat);
+    setCFormLng(cli.lng);
+    setCFormIsValidated(true);
+    setIsClientModalOpen(true);
+  };
+
+  const handleOpenAddClient = () => {
+    setCEditingClient(null);
+    setCFormName('');
+    setCFormWhatsApp('');
+    setCFormAddress('');
+    setCFormLat(gOriginLat);
+    setCFormLng(gOriginLng);
+    setCFormIsValidated(false);
+    setIsClientModalOpen(true);
+  };
+
+  const handleExportClientsCSV = () => {
+    const regionalClients = clients.filter(c => c.region === region);
+    if (regionalClients.length === 0) {
+      alert('Nenhum cliente cadastrado nesta região para exportar.');
+      return;
+    }
+
+    const headers = ['ID', 'Nome', 'WhatsApp', 'Endereco', 'Lat', 'Lng', 'Regiao', 'CriadoEm'];
+    const rows = regionalClients.map(c => [
+      c.id,
+      `"${c.name.replace(/"/g, '""')}"`,
+      c.whatsApp,
+      `"${c.address.replace(/"/g, '""')}"`,
+      c.lat,
+      c.lng,
+      c.region,
+      c.createdAt
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `banco_clientes_${region}_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCreateRouteFromSelected = () => {
+    if (checkedClientIds.length === 0) {
+      alert('Selecione pelo menos um cliente no banco de dados.');
+      return;
+    }
+
+    const selectedClients = clients.filter(c => checkedClientIds.includes(c.id));
+    const newStops: Parada[] = selectedClients.map((c, index) => ({
+      id: `p_stop_db_${Date.now()}_${index}`,
+      clientName: c.name,
+      clientWhatsApp: c.whatsApp,
+      address: c.address,
+      lat: c.lat,
+      lng: c.lng,
+      status: 'pending',
+      region: c.region
+    }));
+
+    setGStops(newStops);
+    setCEditingClient(null);
+    setCheckedClientIds([]);
+    setClientSubTab('planner');
+  };
+
   // Address places suggestions for Gerente view
   const gFetchAddressPredictions = (inputStr: string) => {
     if (!inputStr || inputStr.trim().length < 3) {
@@ -2539,6 +2716,24 @@ export function GerenteDashboard({
     setGCustomLng(preset.lng);
     setGClientWhatsApp('553399' + Math.floor(1000000 + Math.random() * 9000000));
     setGIsValidated(true);
+  };
+
+  const moveStopUp = (index: number) => {
+    if (index === 0) return;
+    const newStops = [...gStops];
+    const temp = newStops[index];
+    newStops[index] = newStops[index - 1];
+    newStops[index - 1] = temp;
+    setGStops(newStops);
+  };
+
+  const moveStopDown = (index: number) => {
+    if (index === gStops.length - 1) return;
+    const newStops = [...gStops];
+    const temp = newStops[index];
+    newStops[index] = newStops[index + 1];
+    newStops[index + 1] = temp;
+    setGStops(newStops);
   };
 
   const gHandleAddStop = () => {
@@ -3793,19 +3988,78 @@ export function GerenteDashboard({
             <div className="bg-white border border-slate-205 rounded-2xl p-6 shadow-md flex flex-col flex-grow space-y-6 font-sans">
               <div className="flex items-center justify-between border-b border-slate-200 pb-3.5">
                 <div>
-                  <h3 className="text-sm font-extrabold text-slate-800 flex items-center gap-2 font-sans">
+                  <h3 className="text-sm font-extrabold text-slate-805 flex items-center gap-2 font-sans">
                     <Users className="w-4.5 h-4.5 text-indigo-700 shrink-0" />
-                    Central de Planejamento e Despacho ao Condutor (Clientes)
+                    Central Operacional de Clientes & Logística Reversa
                   </h3>
-                  <p className="text-[11px] text-slate-400 mt-0.5">Criação de itinerários, otimização automática de paradas e alocação de frota regional em tempo real.</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5 font-sans">Cadastre clientes recorrentes, carregue planilhas regionalizadas, gerencie coordenadas e despache itinerários otimizados de transporte.</p>
                 </div>
                 
                 <span className="text-[9px] font-mono text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100 font-bold uppercase shrink-0">
-                  {region}-DESPATCH
+                  {region}-CLIENT-MANAGER
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start font-sans">
+              {/* Horizontal Subtabs Switcher */}
+              <div className="flex gap-4 border-b border-slate-150 pb-px select-none">
+                <button
+                  type="button"
+                  onClick={() => setClientSubTab('database')}
+                  className={`pb-2.5 font-extrabold text-xs uppercase tracking-wider transition-all border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                    clientSubTab === 'database'
+                      ? 'border-indigo-600 text-indigo-700 font-black'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  📂 Banco de Dados de Clientes ({clients.filter(c => c.region === region).length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setClientSubTab('planner')}
+                  className={`pb-2.5 font-extrabold text-xs uppercase tracking-wider transition-all border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                    clientSubTab === 'planner'
+                      ? 'border-indigo-600 text-indigo-700 font-black'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  🚚 Criar e Despachar Rota
+                  {gStops.length > 0 && (
+                    <span className="bg-indigo-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full">
+                      {gStops.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {clientSubTab === 'database' ? (
+                <ClienteManager
+                  region={region}
+                  clients={clients}
+                  onSaveClient={onSaveClient}
+                  onDeleteClient={onDeleteClient}
+                  onAddSelectedToRoute={(selectedClients) => {
+                    const newStops: Parada[] = selectedClients.map((c, index) => ({
+                      id: `p_stop_db_${Date.now()}_${index}`,
+                      clientName: c.name,
+                      clientWhatsApp: c.whatsApp,
+                      address: c.address,
+                      lat: c.lat,
+                      lng: c.lng,
+                      status: 'pending',
+                      region: c.region
+                    }));
+                    setGStops(newStops);
+                    setClientSubTab('planner');
+                  }}
+                  setIsImporterOpen={setIsImporterOpen}
+                  gOriginLat={gOriginLat}
+                  gOriginLng={gOriginLng}
+                />
+              ) : (
+                /* ==============================================================
+                   SUBTAB 2: ORIGINAL PLANNER CONTAINER WITH SECTIONS A + B
+                   ============================================================== */
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start font-sans">
                 {/* Section A: Creator/Editor card form (xl:col-span-5) */}
                 <div className="xl:col-span-5 space-y-5">
                   
@@ -3995,14 +4249,34 @@ export function GerenteDashboard({
                                   <p className="text-[10px] text-slate-450 truncate font-mono mt-0.5">{st.address}</p>
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => setGStops(prev => prev.filter(item => item.id !== st.id))}
-                                  title="Remover ponto de carga"
-                                  className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-all cursor-pointer shrink-0 active:scale-90"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => moveStopUp(idx)}
+                                    disabled={idx === 0}
+                                    title="Subir Parada"
+                                    className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 p-1 rounded transition-all cursor-pointer active:scale-90 font-mono text-[10px]"
+                                  >
+                                    ▲
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => moveStopDown(idx)}
+                                    disabled={idx === gStops.length - 1}
+                                    title="Descer Parada"
+                                    className="text-slate-400 hover:text-indigo-600 disabled:opacity-30 p-1 rounded transition-all cursor-pointer active:scale-90 font-mono text-[10px]"
+                                  >
+                                    ▼
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setGStops(prev => prev.filter(item => item.id !== st.id))}
+                                    title="Remover ponto de carga"
+                                    className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-1.5 rounded-lg transition-all cursor-pointer shrink-0 active:scale-90 font-sans"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -4272,6 +4546,7 @@ export function GerenteDashboard({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* FULL-SCREEN SECURE CLIENT IMPORTER MODAL */}
               {isImporterOpen && (
@@ -4302,11 +4577,29 @@ export function GerenteDashboard({
                       <ClientImporter 
                         currentRegion={region}
                         onImportStops={(stops) => {
-                          setGStops(prev => {
-                            const prevIds = new Set(prev.map(p => p.id));
-                            const filteredNewStops = stops.filter(s => !prevIds.has(s.id));
-                            return [...prev, ...filteredNewStops];
-                          });
+                          if (clientSubTab === 'database') {
+                            stops.forEach(st => {
+                              if (onSaveClient) {
+                                onSaveClient({
+                                  id: st.id || `cli_imp_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+                                  name: st.clientName,
+                                  whatsApp: (st as any).clientWhatsApp || (st as any).phone || '5533991234567',
+                                  address: st.address,
+                                  lat: st.lat,
+                                  lng: st.lng,
+                                  region: region,
+                                  createdAt: new Date().toISOString()
+                                });
+                              }
+                            });
+                            alert(`Excelente! Sincronização operacional realizada. ${stops.length} clientes foram adicionados ao seu Banco de Dados!`);
+                          } else {
+                            setGStops(prev => {
+                              const prevIds = new Set(prev.map(p => p.id));
+                              const filteredNewStops = stops.filter(s => !prevIds.has(s.id));
+                              return [...prev, ...filteredNewStops];
+                            });
+                          }
                           setIsImporterOpen(false); // Cleanly dismiss
                         }}
                       />

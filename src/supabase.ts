@@ -6,12 +6,12 @@
 import { createClient } from '@supabase/supabase-js';
 import { 
   RouteUser, Rota, GPSLocation, ChatMessage, 
-  NotificationLog, PushDeliveryLog, AuditLogEntry, RoutePerformanceLog, Region 
+  NotificationLog, PushDeliveryLog, AuditLogEntry, RoutePerformanceLog, Region, Cliente 
 } from './types';
 import { 
   INITIAL_USERS, INITIAL_ROTAS, INITIAL_LOCATIONS, 
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
-  INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS
+  INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
 } from './mockData';
 
 // Verify environment variables (supports client-side dynamic loading)
@@ -48,6 +48,7 @@ class ReactiveLocalStorage {
     if (!localStorage.getItem('sb_performanceLogs')) localStorage.setItem('sb_performanceLogs', JSON.stringify(INITIAL_PERFORMANCE_LOGS));
     if (!localStorage.getItem('sb_pushLogs')) localStorage.setItem('sb_pushLogs', JSON.stringify(INITIAL_PUSH_LOGS));
     if (!localStorage.getItem('sb_regions')) localStorage.setItem('sb_regions', JSON.stringify(INITIAL_REGIONS));
+    if (!localStorage.getItem('sb_clients')) localStorage.setItem('sb_clients', JSON.stringify(INITIAL_CLIENTS));
   }
 
   getItems<T>(key: string): T[] {
@@ -90,6 +91,7 @@ class ReactiveLocalStorage {
     localStorage.setItem('sb_performanceLogs', JSON.stringify(INITIAL_PERFORMANCE_LOGS));
     localStorage.setItem('sb_pushLogs', JSON.stringify(INITIAL_PUSH_LOGS));
     localStorage.setItem('sb_regions', JSON.stringify(INITIAL_REGIONS));
+    localStorage.setItem('sb_clients', JSON.stringify(INITIAL_CLIENTS));
 
     Object.keys(this.listeners).forEach(key => {
       this.notify(key, this.getItems(key));
@@ -132,6 +134,7 @@ export async function seedDatabaseIfEmpty() {
       await supabase.from('audit_logs').insert(INITIAL_AUDIT_LOGS);
       await supabase.from('performance_logs').insert(INITIAL_PERFORMANCE_LOGS);
       await supabase.from('push_logs').insert(INITIAL_PUSH_LOGS);
+      await supabase.from('clients').insert(INITIAL_CLIENTS);
 
       console.log('[Supabase Seeding] Supabase database seeding complete!');
     }
@@ -284,6 +287,30 @@ export async function deleteCloudRegion(regionId: string) {
   }
 }
 
+export async function saveCloudClient(client: Cliente) {
+  // Local Database Sync
+  const prev = localDB.getItems<Cliente>('clients');
+  const index = prev.findIndex(c => c.id === client.id);
+  if (index !== -1) prev[index] = client;
+  else prev.push(client);
+  localDB.setItems('clients', prev);
+
+  if (isConfigured && supabase) {
+    await supabase.from('clients').upsert(client as any);
+  }
+}
+
+export async function deleteCloudClient(clientId: string) {
+  // Local Database Sync
+  const prev = localDB.getItems<Cliente>('clients');
+  const filtered = prev.filter(c => c.id !== clientId);
+  localDB.setItems('clients', filtered);
+
+  if (isConfigured && supabase) {
+    await supabase.from('clients').delete().eq('id', clientId);
+  }
+}
+
 export async function resetCloudDatabaseAll() {
   localDB.resetAll();
 
@@ -298,6 +325,7 @@ export async function resetCloudDatabaseAll() {
       await supabase.from('audit_logs').delete().neq('id', 'dummy');
       await supabase.from('performance_logs').delete().neq('id', 'dummy');
       await supabase.from('push_logs').delete().neq('id', 'dummy');
+      await supabase.from('clients').delete().neq('id', 'dummy');
 
       // Now insert baseline
       await supabase.from('users').insert(INITIAL_USERS);
@@ -312,6 +340,7 @@ export async function resetCloudDatabaseAll() {
       await supabase.from('audit_logs').insert(INITIAL_AUDIT_LOGS);
       await supabase.from('performance_logs').insert(INITIAL_PERFORMANCE_LOGS);
       await supabase.from('push_logs').insert(INITIAL_PUSH_LOGS);
+      await supabase.from('clients').insert(INITIAL_CLIENTS);
       
       console.log('[Supabase Cloud Reset] Database cleared and successfully re-seeded.');
     } catch (err) {
@@ -402,6 +431,17 @@ CREATE TABLE IF NOT EXISTS public.regions (
   lat DOUBLE PRECISION,
   lng DOUBLE PRECISION,
   radius DOUBLE PRECISION
+);
+
+CREATE TABLE IF NOT EXISTS public.clients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  "whatsApp" TEXT,
+  address TEXT NOT NULL,
+  lat DOUBLE PRECISION,
+  lng DOUBLE PRECISION,
+  region TEXT NOT NULL,
+  "createdAt" TEXT
 );
 
 CREATE TABLE IF NOT EXISTS public.rotas (
@@ -499,4 +539,5 @@ alter publication supabase_realtime add table public.notifications;
 alter publication supabase_realtime add table public.audit_logs;
 alter publication supabase_realtime add table public.performance_logs;
 alter publication supabase_realtime add table public.push_logs;
+alter publication supabase_realtime add table public.clients;
 `;

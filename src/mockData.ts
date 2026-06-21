@@ -522,3 +522,13 @@ export const INITIAL_PUSH_LOGS: PushDeliveryLog[] = [
   }
 ];
 
+export const INITIAL_CLIENTS: any[] = [
+  { id: 'cli_1', name: 'Mercantil São Francisco', whatsApp: '5533991234561', address: 'Rua Benjamin Constant, 120 - Centro', lat: -18.848, lng: -41.954, region: 'GV1', createdAt: '2026-06-20T08:00:00Z' },
+  { id: 'cli_2', name: 'Supermercado Central', whatsApp: '5533991234562', address: 'Av. Brasil, 4200 - Centro', lat: -18.855, lng: -41.942, region: 'GV1', createdAt: '2026-06-20T08:30:00Z' },
+  { id: 'cli_3', name: 'Padaria Princesa', whatsApp: '5533991234563', address: 'Rua Sete de Setembro, 320 - Esplanada', lat: -18.862, lng: -41.948, region: 'GV1', createdAt: '2026-06-20T09:00:00Z' },
+  { id: 'cli_4', name: 'Drogaria do Povo', whatsApp: '5533991234564', address: 'Rua Israel pinheiro, 1500 - Shopping', lat: -18.850, lng: -41.946, region: 'GV1', createdAt: '2026-06-20T09:15:00Z' },
+  { id: 'cli_5', name: 'Mercearia Popular', whatsApp: '5533991234565', address: 'Av. JK, 1100 - Vila Isa', lat: -18.882, lng: -41.972, region: 'GV1', createdAt: '2026-06-20T09:30:00Z' },
+  { id: 'cli_6', name: 'Supermercado Mineiro', whatsApp: '5531998765431', address: 'Av. Afonso Pena, 2000 - Centro', lat: -19.925, lng: -43.935, region: 'ES/MG', createdAt: '2026-06-20T10:00:00Z' },
+  { id: 'cli_7', name: 'Drogasil Savassi', whatsApp: '5531998765432', address: 'Praça da Savassi, 10 - Savassi', lat: -19.938, lng: -43.936, region: 'ES/MG', createdAt: '2026-06-20T10:15:00Z' }
+];
+
