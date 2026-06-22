@@ -11,14 +11,13 @@ import TechDocumentation from './components/TechDocumentation';
 import AdminLoginGateway from './components/AdminLoginGateway';
 import ActiveSessionBlocker from './components/ActiveSessionBlocker';
 import { AdminDashboard } from './components/AdminDashboard';
-import { 
-  GerenteDashboard, 
-  MotoristaDashboard, 
-  VendedorDashboard 
-} from './components/RoleViews';
+import { GerenteDashboard } from './components/GerenteDashboard';
+import { MotoristaDashboard } from './components/MotoristaDashboard';
+import { VendedorDashboard } from './components/VendedorDashboard';
+import UserProfilePage from './components/UserProfilePage';
 import { 
   Network, Play, HelpCircle, EyeOff, ShieldAlert,
-  Info, AlertTriangle, AlertCircle, Compass, CheckCircle2 
+  Info, AlertTriangle, AlertCircle, Compass, CheckCircle2, User 
 } from 'lucide-react';
 import { NetworkGpsStatusWidget } from './components/NetworkGpsStatusWidget';
 import { motion, AnimatePresence } from 'motion/react';
@@ -52,6 +51,7 @@ export default function App() {
     handleImpersonate,
     handleModerateUser,
     handleUpdateUser,
+    handleSelfProfileUpdate,
     handleCreateUser,
     handleDeleteUser,
     handleSaveRegion,
@@ -68,7 +68,7 @@ export default function App() {
     setIsDemoSimulationActive
   } = useRouteLogState();
 
-  const [activeTab, setActiveTab] = useState<'simulation' | 'docs'>('simulation');
+  const [activeTab, setActiveTab] = useState<'simulation' | 'profile' | 'docs'>('simulation');
   const [fcmToast, setFcmToast] = useState<{ title: string; body: string; type: string } | null>(null);
   const [currentPathname, setCurrentPathname] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
 
@@ -156,14 +156,18 @@ export default function App() {
           <div className="flex flex-col sm:flex-row items-center gap-3.5">
             {isWidescreen && activeSessionUser && (
               <div className="flex items-center gap-2.5 bg-slate-100/95 border border-slate-200 px-3 py-1.5 rounded-xl text-xs shadow-sm">
-                <div className="flex flex-col text-right">
-                  <span className="font-bold text-slate-800 text-[11px] leading-tight truncate max-w-[150px]">
+                <button
+                  onClick={() => setActiveTab('profile')}
+                  title="Ver e Editar Meu Perfil"
+                  className="flex flex-col text-right hover:opacity-85 transition-opacity cursor-pointer group"
+                >
+                  <span className="font-bold text-slate-800 text-[11px] leading-tight truncate max-w-[150px] group-hover:text-blue-600 transition-colors">
                     {activeSessionUser.name}
                   </span>
                   <span className="text-[9px] text-[#4f46e5] bg-[#e0e7ff] px-1.5 py-0.5 border border-[#c7d2fe]/50 rounded font-mono font-black leading-none mt-0.5">
                     {matchesAdminRole ? 'ADMIN MASTER' : `GERENTE (Região ${ (activeSessionUser as any).region || '' })`}
                   </span>
-                </div>
+                </button>
                 <div className="w-px h-6 bg-slate-300/80"></div>
                 <button
                   onClick={handleLogout}
@@ -177,7 +181,7 @@ export default function App() {
 
             <NetworkGpsStatusWidget />
             
-            {/* Core Master Tabs (Simulation vs Docs) */}
+            {/* Core Master Tabs (Simulation vs Profile vs Docs) */}
             <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-250/20 font-mono text-xs">
               <button
                 onClick={() => setActiveTab('simulation')}
@@ -190,6 +194,19 @@ export default function App() {
                 <Play className="w-3.5 h-3.5 fill-current" />
                 Painel Operacional
               </button>
+              {activeSessionUser && (
+                <button
+                  onClick={() => setActiveTab('profile')}
+                  className={`px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 font-bold cursor-pointer ${
+                    activeTab === 'profile' 
+                      ? 'bg-blue-600 text-white shadow-sm' 
+                      : 'text-slate-500 hover:text-slate-950 hover:bg-slate-200/50'
+                  }`}
+                >
+                  <User className="w-3.5 h-3.5" />
+                  Meu Perfil
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('docs')}
                 className={`px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 font-bold cursor-pointer ${
@@ -238,6 +255,7 @@ export default function App() {
                     onReset={resetAllData}
                     currentUser={currentUser}
                     onLogout={handleLogout}
+                    onViewProfile={() => setActiveTab('profile')}
                   />
                 </div>
               </div>
@@ -283,6 +301,21 @@ export default function App() {
                 className="flex-1"
               >
                 <TechDocumentation />
+              </motion.div>
+            ) : activeTab === 'profile' && activeSessionUser ? (
+              // Tab 3: Editable and personalized profile page
+              <motion.div
+                key="profile"
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -15 }}
+                transition={{ duration: 0.25, ease: "easeInOut" }}
+                className="flex-1"
+              >
+                <UserProfilePage 
+                  user={activeSessionUser} 
+                  onUpdateProfile={handleSelfProfileUpdate} 
+                />
               </motion.div>
             ) : (
               // Tab 1: Real-time simulation board

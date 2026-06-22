@@ -2,8 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, 
   AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region, AdminUser 

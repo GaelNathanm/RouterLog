@@ -1095,6 +1095,32 @@ export function useRouteLogState() {
     await saveCloudAuditLog(newAudit);
   };
 
+  const handleSelfProfileUpdate = async (updatedUser: RouteUser) => {
+    await saveCloudUser(updatedUser);
+    
+    if (currentUser && currentUser.id === updatedUser.id) {
+      setCurrentUser(updatedUser);
+    }
+    
+    if (impersonatingUser && impersonatingUser.id === updatedUser.id) {
+      setImpersonatingUser(updatedUser);
+    }
+    
+    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+
+    const newAudit: AuditLogEntry = {
+      id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
+      adminId: updatedUser.id,
+      adminName: updatedUser.name,
+      action: 'Editar Perfil Pessoal',
+      targetUserId: updatedUser.id,
+      targetUserName: updatedUser.name,
+      details: `${updatedUser.name} editou seu próprio perfil e dados personalizados.`,
+      timestamp: new Date().toISOString()
+    };
+    await saveCloudAuditLog(newAudit);
+  };
+
   const handleCreateUser = async (userData: Partial<RouteUser>) => {
     const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
     if (!isUserAdmin) return;
@@ -1573,6 +1599,7 @@ export function useRouteLogState() {
     handleImpersonate,
     handleModerateUser,
     handleUpdateUser,
+    handleSelfProfileUpdate,
     handleCreateUser,
     handleDeleteUser,
     handleSaveRegion,

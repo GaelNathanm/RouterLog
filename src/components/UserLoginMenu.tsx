@@ -17,9 +17,10 @@ interface LoginMenuProps {
   onReset: () => void;
   currentUser: RouteUser | null;
   onLogout: () => void;
+  onViewProfile?: () => void;
 }
 
-export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogin, onRegister, onReset, currentUser, onLogout }: LoginMenuProps) {
+export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogin, onRegister, onReset, currentUser, onLogout, onViewProfile }: LoginMenuProps) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -210,6 +211,16 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
               )}
             </div>
           </div>
+
+          {onViewProfile && (
+            <button
+              onClick={onViewProfile}
+              className="w-full flex items-center justify-center gap-1.5 py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold hover:shadow-md transition-all cursor-pointer"
+            >
+              <User className="w-3.5 h-3.5" />
+              Ver / Editar Meu Perfil
+            </button>
+          )}
 
           <button
             onClick={onLogout}
