@@ -5,8 +5,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, 
-  AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region, AdminUser 
+  AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region, AdminUser, Cliente 
 } from '../types';
+import ClientImporter from './ClientImporter';
+import ClienteManager from './ClienteManager';
 import { 
   Users, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
   Trash2, AlertCircle, Share2, Navigation, CheckCircle, Send, MessageSquare, 
@@ -302,6 +304,9 @@ export interface AdminProps {
     customTitle?: string,
     customBody?: string
   ) => PushDeliveryLog;
+  clients?: Cliente[];
+  onSaveClient?: (client: Cliente) => void;
+  onDeleteClient?: (clientId: string) => void;
 }
 
 export function AdminDashboard({ 
@@ -322,10 +327,15 @@ export function AdminDashboard({
   onSaveRegion,
   onDeleteRegion,
   onPush,
-  onSendPush
+  onSendPush,
+  clients = [],
+  onSaveClient,
+  onDeleteClient
 }: AdminProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'users' | 'analytics' | 'chats' | 'audits' | 'desempenho' | 'mapa' | 'regioes'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'analytics' | 'chats' | 'audits' | 'desempenho' | 'mapa' | 'regioes' | 'clientes'>('users');
+  const [adminSelectedRegion, setAdminSelectedRegion] = useState<string>('GV1');
+  const [isImporterOpen, setIsImporterOpen] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [pushTitle, setPushTitle] = useState('');
   const [pushBody, setPushBody] = useState('');
@@ -670,6 +680,15 @@ export function AdminDashboard({
           }`}
         >
           Filiais & Regiões do Brasil
+        </button>
+        <button
+          onClick={() => setActiveTab('clientes')}
+          className={`py-2.5 px-4 font-semibold border-b-2 -mb-px transition-all flex items-center gap-1.5 ${
+            activeTab === 'clientes' ? 'border-rose-600 text-rose-600' : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Users className="w-3.5 h-3.5" />
+          Clientes & Importador ({clients.length})
         </button>
       </div>
 
@@ -2257,6 +2276,104 @@ export function AdminDashboard({
 
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'clientes' && (
+        <div className="space-y-6 animate-fade-in font-sans">
+          {/* Header Action Card */}
+          <div className="bg-gradient-to-r from-rose-50 to-orange-50/70 border border-rose-100 rounded-2xl p-5 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-sm font-black text-rose-950 uppercase tracking-widest font-mono flex items-center gap-2">
+                <Users className="w-4 h-4 text-rose-600" />
+                Administração Central de Clientes & Portfólio
+              </h3>
+              <p className="text-xs text-rose-800 font-sans mt-0.5 font-medium leading-relaxed">
+                Gerencie o banco correspondente de clientes operacionais, geolocalize novos endereços e importe arquivos em lote.
+              </p>
+            </div>
+
+            {/* Region Selector */}
+            <div className="flex items-center gap-2 bg-white px-3.5 py-2 border border-slate-200 rounded-xl shadow-xs shrink-0 self-start md:self-auto">
+              <span className="text-[10px] uppercase font-bold text-slate-600 font-mono tracking-wider">Filtrar por Região:</span>
+              <select
+                value={adminSelectedRegion}
+                onChange={(e) => setAdminSelectedRegion(e.target.value)}
+                className="text-xs font-extrabold text-slate-900 border-0 p-0 pr-6 focus:ring-0 cursor-pointer bg-transparent focus:outline-none"
+              >
+                {regions.map((reg) => (
+                  <option key={reg.id} value={reg.name}>
+                    {reg.name.toUpperCase()} - {reg.description || 'Regional'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Render the core ClienteManager component */}
+          <ClienteManager
+            region={adminSelectedRegion}
+            clients={clients}
+            onSaveClient={onSaveClient || (() => {})}
+            onDeleteClient={onDeleteClient || (() => {})}
+            onAddSelectedToRoute={(selectedClients) => {
+              alert(`Você selecionou ${selectedClients.length} clientes. No Painel Administrativo, você gerencia o cadastro. Para gerar rotas ativas, faça a atribuição através de um Gerente Regional.`);
+            }}
+            setIsImporterOpen={setIsImporterOpen}
+            gOriginLat={adminSelectedRegion.toUpperCase().startsWith('GV') ? -20.302534 : -20.302534}
+            gOriginLng={adminSelectedRegion.toUpperCase().startsWith('GV') ? -40.401030 : -40.401630}
+          />
+
+          {/* ClientImporter File Modal Integration for Admin */}
+          {isImporterOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4 z-[9999] overflow-y-auto leading-normal">
+              <div className="bg-white rounded-3xl border border-slate-250 shadow-2xl w-full max-w-5xl overflow-hidden animate-in fade-in zoom-in duration-200">
+                {/* Modal Header */}
+                <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between select-none">
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-5 h-5 text-indigo-400" />
+                    <div>
+                      <h3 className="font-extrabold text-[12px] uppercase tracking-wider font-mono">
+                        Importador e Validador de Endereços (Administração)
+                      </h3>
+                      <p className="text-[10px] text-slate-400">Banco de dados da filial: <span className="text-white font-bold uppercase">{adminSelectedRegion}</span></p>
+                    </div>
+                  </div>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setIsImporterOpen(false)}
+                    className="bg-slate-800 hover:bg-slate-705 p-2 rounded-xl text-slate-400 hover:text-white transition-all cursor-pointer active:scale-90"
+                  >
+                    <X className="w-4 h-4 text-slate-400 font-bold" />
+                  </button>
+                </div>
+
+                <div className="p-2 text-slate-800 max-h-[85vh] overflow-y-auto">
+                  <ClientImporter 
+                    currentRegion={adminSelectedRegion}
+                    onImportStops={(stops) => {
+                      stops.forEach((st) => {
+                        if (onSaveClient) {
+                          onSaveClient({
+                            id: st.id || `cli_imp_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+                            name: st.clientName,
+                            whatsApp: (st as any).clientWhatsApp || (st as any).phone || '5533991234567',
+                            address: st.address,
+                            lat: st.lat,
+                            lng: st.lng,
+                            region: adminSelectedRegion,
+                            createdAt: new Date().toISOString()
+                          });
+                        }
+                      });
+                      setIsImporterOpen(false); // Cleanly dismiss
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

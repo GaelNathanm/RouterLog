@@ -361,6 +361,9 @@ export default function App() {
                           pushLogs={pushLogs}
                           pushConfig={pushConfig}
                           regions={regions}
+                          clients={clients}
+                          onSaveClient={handleSaveClient}
+                          onDeleteClient={handleDeleteClient}
                           onImpersonate={handleImpersonate}
                           onModerate={handleModerateUser}
                           onUpdateUser={handleUpdateUser}

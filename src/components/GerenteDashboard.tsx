@@ -2273,29 +2273,43 @@ export function GerenteDashboard({
                       <ClientImporter 
                         currentRegion={region}
                         onImportStops={(stops) => {
-                          if (clientSubTab === 'database') {
-                            stops.forEach(st => {
-                              if (onSaveClient) {
-                                onSaveClient({
-                                  id: st.id || `cli_imp_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
-                                  name: st.clientName,
-                                  whatsApp: (st as any).clientWhatsApp || (st as any).phone || '5533991234567',
-                                  address: st.address,
-                                  lat: st.lat,
-                                  lng: st.lng,
-                                  region: region,
-                                  createdAt: new Date().toISOString()
-                                });
-                              }
-                            });
-                            alert(`Excelente! Sincronização operacional realizada. ${stops.length} clientes foram adicionados ao seu Banco de Dados!`);
-                          } else {
+                          // Always save all imported clients to client registry (database) to guarantee backing
+                          stops.forEach(st => {
+                            if (onSaveClient) {
+                              onSaveClient({
+                                id: st.id || `cli_imp_${Date.now()}_${Math.floor(Math.random() * 100000)}`,
+                                name: st.clientName,
+                                whatsApp: (st as any).clientWhatsApp || (st as any).phone || '5533991234567',
+                                address: st.address,
+                                lat: st.lat,
+                                lng: st.lng,
+                                region: region,
+                                createdAt: new Date().toISOString()
+                              });
+                            }
+                          });
+
+                          // Determine if we should also load them into the current active planning queue (gStops)
+                          const isPlanningPath = activeTab === 'routes' || (activeTab === 'clientes' && clientSubTab === 'planner');
+
+                          if (isPlanningPath) {
                             setGStops(prev => {
                               const prevIds = new Set(prev.map(p => p.id));
                               const filteredNewStops = stops.filter(s => !prevIds.has(s.id));
                               return [...prev, ...filteredNewStops];
                             });
+
+                            if (activeTab === 'routes') {
+                              // Let them stay inside routes tab so they can finish planning! Keep track of progress.
+                              alert(`Excelente! Planilha de faturamento processada. ${stops.length} clientes/paradas foram salvos no Banco de Dados e adicionados ao seu Quadro de Planejamento de Rotas atual!`);
+                            } else {
+                              alert(`Excelente! Planilha de faturamento processada. ${stops.length} clientes/paradas foram salvos no Banco de Dados e carregados no Planejador de Rotas!`);
+                            }
+                          } else {
+                            // Only registering to clients list database
+                            alert(`Excelente! Sincronização operacional realizada. ${stops.length} clientes foram importados e salvos em seu Banco de Dados!`);
                           }
+
                           setIsImporterOpen(false); // Cleanly dismiss
                         }}
                       />
