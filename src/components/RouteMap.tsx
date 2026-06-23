@@ -70,6 +70,7 @@ function SmoothDriverMarker({ position, onClick, children }: SmoothDriverMarkerP
 const API_KEY =
   process.env.GOOGLE_MAPS_PLATFORM_KEY ||
   (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
+  (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY ||
   (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
   '';
 const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY' && API_KEY.trim() !== '';
@@ -242,6 +243,27 @@ export default function RouteMap({
   useEffect(() => {
     setUseFallbackMap(!hasValidKey);
   }, [hasValidKey]);
+
+  // Listen for Google Maps global authorization/billing failure
+  useEffect(() => {
+    const originalAuthFailure = (window as any).gm_authFailure;
+    (window as any).gm_authFailure = () => {
+      console.warn("Google Maps Auth/Billing Failure detected. Falling back to Vector grid.");
+      setMapLoadError("BillingNotEnabledMapError: O Google Maps retornou erro de faturamento ou expiração de chave. O simulador vetorial foi ativado automaticamente.");
+      setUseFallbackMap(true);
+      if (originalAuthFailure) {
+        try {
+          originalAuthFailure();
+        } catch (e) {}
+      }
+    };
+
+    return () => {
+      if ((window as any).gm_authFailure === originalAuthFailure) {
+        (window as any).gm_authFailure = originalAuthFailure;
+      }
+    };
+  }, []);
 
   // Vector animation trace
   useEffect(() => {
