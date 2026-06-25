@@ -15,6 +15,7 @@ import { GerenteDashboard } from './components/GerenteDashboard';
 import { MotoristaDashboard } from './components/MotoristaDashboard';
 import { VendedorDashboard } from './components/VendedorDashboard';
 import UserProfilePage from './components/UserProfilePage';
+import ControlPanelMockMap from './components/ControlPanelMockMap';
 import { 
   Network, Play, HelpCircle, EyeOff, ShieldAlert,
   Info, AlertTriangle, AlertCircle, Compass, CheckCircle2, User 
@@ -345,6 +346,17 @@ export default function App() {
                         SEGURANÇA ATIVA: ISOLAMENTO REGIONAL HABILITADO
                       </div>
                     </div>
+
+                    {/* TELEMETRY & TRACKING REDUNDANCY MONITOR FOR LOGISTICS MANAGERS & ADMINS */}
+                    {(matchesAdminRole || matchesGerenteRole) && (
+                      <ControlPanelMockMap
+                        locations={locations}
+                        users={users}
+                        rotas={rotas}
+                        regions={regions}
+                        activeUserRegion={(activeSessionUser as any)?.region || "all"}
+                      />
+                    )}
 
                     {/* Segment view dashboard based on user role */}
                     <div className="flex-1">
