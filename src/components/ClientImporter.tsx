@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { showToast } from '../utils/toast';
 import { 
   Upload, 
   FileSpreadsheet, 
@@ -128,7 +129,7 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
 
     // Latitude / Longitude limits Brazil bounds approx: Lat -34 to +5, Lng -74 to -35
     if (isNaN(latitude) || isNaN(longitude) || latitude === 0 || longitude === 0) {
-      errors.coordinates = 'Coordenadas ausentes. Serão simuladas no centro da região de destino.';
+      errors.coordinates = 'Coordenadas ausentes. Serão posicionadas no centro da região de destino.';
     } else if (latitude < -34 || latitude > 5 || longitude < -74 || longitude > -35) {
       errors.coordinates = 'Coordenadas geográficas inválidas para o território nacional brasileiro.';
     }
@@ -178,7 +179,7 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
         try {
           parseCSV(text);
         } catch (err) {
-          alert('Erro ao processar arquivo de texto: ' + err);
+          showToast('Erro ao processar arquivo de texto: ' + err, 'error', 'Importador');
         }
       };
       reader.readAsText(file, 'UTF-8');
@@ -210,10 +211,10 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
             autoDetectMappings(rawHeaders);
             setStep('mapping');
           } else {
-            alert('A planilha importada está vazia.');
+            showToast('A planilha importada está vazia.', 'warning', 'Importador');
           }
         } catch (err) {
-          alert('Erro ao processar arquivo do Excel: ' + err);
+          showToast('Erro ao processar arquivo do Excel: ' + err, 'error', 'Importador');
         }
       };
       reader.readAsArrayBuffer(file);
@@ -235,15 +236,15 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
             autoDetectMappings(keys);
             setStep('mapping');
           } else {
-            alert('O JSON importado está vazio ou não possui formato de array corporativo esperado.');
+            showToast('O JSON importado está vazio ou não possui formato de array corporativo esperado.', 'warning', 'Importador');
           }
         } catch (e) {
-          alert('Erro na estrutura do JSON: ' + e);
+          showToast('Erro na estrutura do JSON: ' + e, 'error', 'Importador');
         }
       };
       reader.readAsText(file);
     } else {
-      alert('Extensão de arquivo não suportada. Escolha um arquivo Excel (.xlsx, .xls), CSV (.csv) ou cadastro em JSON.');
+      showToast('Extensão de arquivo não suportada. Escolha um arquivo Excel (.xlsx, .xls), CSV (.csv) ou cadastro em JSON.', 'warning', 'Arquivo Inválido');
     }
   };
 
@@ -255,7 +256,7 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
 
     const lines = text.split(/\r?\n/);
     if (lines.length === 0 || lines[0].trim() === '') {
-      alert('Arquivo CSV vazio.');
+      showToast('Arquivo CSV vazio.', 'warning', 'Importador');
       return;
     }
 
@@ -345,11 +346,11 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
   // Compute final mapped objects and pre-validate them
   const handleApplyMappings = () => {
     if (!mappings.clientName) {
-      alert('Mapeie uma coluna para "Nome do Cliente"!');
+      showToast('Mapeie uma coluna para "Nome do Cliente"!', 'warning', 'Mapeamento');
       return;
     }
     if (!mappings.address) {
-      alert('Mapeie uma coluna para "Endereço de Entrega"!');
+      showToast('Mapeie uma coluna para "Endereço de Entrega"!', 'warning', 'Mapeamento');
       return;
     }
 
@@ -436,7 +437,7 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
 
     const acceptedRows = validatedRows.filter(r => !r.errors.clientName && !r.errors.address);
     if (acceptedRows.length === 0) {
-      alert('Nenhum cliente válido para importar.');
+      showToast('Nenhum cliente válido para importar.', 'warning', 'Mapeamento');
       return;
     }
 
@@ -466,7 +467,7 @@ export default function ClientImporter({ onImportStops, currentRegion }: ClientI
     onImportStops(stopsToImport);
     
     // Success feedback and reset
-    alert(`Sucesso! ${stopsToImport.length} paradas foram importadas com sucesso para a fila de planejamento.`);
+    showToast(`Sucesso! ${stopsToImport.length} paradas foram importadas com sucesso para a fila de planejamento.`, 'success', 'Importação Realizada');
     setStep('upload');
     setRawRows([]);
     setFileName('');

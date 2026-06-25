@@ -28,12 +28,16 @@ export default function InteractiveMap({ rota, driverLocation, region, onStopCli
 
     if (!rota) return def;
 
-    // Collate all points to compute accurate bounds
+    // Collate all points to compute accurate bounds, filtering out invalid values (0 or NaNs)
     const pts = [
       { lat: rota.originLat, lng: rota.originLng },
-      ...rota.stops.map(s => ({ lat: s.lat, lng: s.lng })),
+      ...rota.stops
+        .filter(s => s.lat && s.lng && !isNaN(s.lat) && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0)
+        .map(s => ({ lat: s.lat, lng: s.lng })),
       ...(driverLocation ? [{ lat: driverLocation.lat, lng: driverLocation.lng }] : [])
-    ];
+    ].filter(p => p.lat && p.lng && !isNaN(p.lat) && !isNaN(p.lng) && p.lat !== 0 && p.lng !== 0);
+
+    if (pts.length === 0) return def;
 
     let minLat = Math.min(...pts.map(p => p.lat));
     let maxLat = Math.max(...pts.map(p => p.lat));
@@ -62,8 +66,8 @@ export default function InteractiveMap({ rota, driverLocation, region, onStopCli
     const lngSpan = bounds.maxLng - bounds.minLng;
 
     // SVG y goes downwards, so invert lat
-    const x = padding + ((lng - bounds.minLng) / lngSpan) * (width - padding * 2);
-    const y = height - padding - ((lat - bounds.minLat) / latSpan) * (height - padding * 2);
+    const x = padding + ((lng - bounds.minLng) / (lngSpan || 1)) * (width - padding * 2);
+    const y = height - padding - ((lat - bounds.minLat) / (latSpan || 1)) * (height - padding * 2);
 
     return { x: isNaN(x) ? width / 2 : x, y: isNaN(y) ? height / 2 : y };
   };
@@ -71,7 +75,9 @@ export default function InteractiveMap({ rota, driverLocation, region, onStopCli
   const polylinePoints = useMemo(() => {
     if (!rota) return '';
     const originProj = project(rota.originLat, rota.originLng);
-    const stopsProj = rota.stops.map(s => project(s.lat, s.lng));
+    const stopsProj = rota.stops
+      .filter(s => s.lat && s.lng && !isNaN(s.lat) && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0)
+      .map(s => project(s.lat, s.lng));
 
     return [
       `${originProj.x},${originProj.y}`,
@@ -167,6 +173,9 @@ export default function InteractiveMap({ rota, driverLocation, region, onStopCli
 
           {/* Render Stops Pins */}
           {rota?.stops.map((stop, index) => {
+            if (!stop.lat || !stop.lng || isNaN(stop.lat) || isNaN(stop.lng) || (stop.lat === 0 && stop.lng === 0)) {
+              return null;
+            }
             const { x, y } = project(stop.lat, stop.lng);
             const isCompleted = stop.status === 'completed';
             const isNextTarget = rota.status === 'active' && index === rota.currentStopIndex;

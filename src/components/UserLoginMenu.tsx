@@ -167,14 +167,6 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
           </h1>
           <p className="text-[10px] text-slate-400 mt-1 font-mono">STATUS: Controle de Frotas Ativo</p>
         </div>
-
-        <button 
-          onClick={onReset}
-          title="Redefinir Dados de Teste"
-          className="p-1.5 rounded-lg border border-slate-200 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors bg-white shadow-sm"
-        >
-          <RefreshCw className="w-3.5 h-3.5" />
-        </button>
       </div>
 
       {currentUser ? (
@@ -437,12 +429,12 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
 
       ) : (
 
-        // DEFAULT PRESET USERS SELECTION PANEL
+        // DEFAULT OPERATOR LOGIN PANEL
         <div className="flex-1 overflow-y-auto pr-1">
           <div className="mb-4">
             <span className="text-xs font-bold text-slate-700 block col-span-full">Controle de Sessão Operacional</span>
             <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed font-sans">
-              Autentique-se via Google, com Conta Real Supabase, ou selecione um perfil simulador para acessar o rastreamento e controle logístico.
+              Autentique-se via Google, com sua Conta Real Supabase, ou crie seu perfil de operador para acessar o rastreamento e controle logístico.
             </p>
           </div>
 
@@ -484,42 +476,6 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
 
           <div className="mb-4">
             <GoogleAuthButton onAuthError={(err) => setErrorMsg(err)} />
-          </div>
-
-          <div className="flex items-center gap-2 my-4">
-            <div className="flex-1 h-px bg-slate-200"></div>
-            <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider shrink-0 select-none">Ou utilize Presets de Simulação</span>
-            <div className="flex-1 h-px bg-slate-200"></div>
-          </div>
-
-          {/* Core operative list */}
-          <div className="space-y-2.5">
-            {users.map(preset => (
-              <div
-                key={preset.id}
-                onClick={() => selectPreset(preset.email)}
-                className="p-3 bg-white hover:bg-blue-50/30 border border-slate-200 rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-between group"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="p-2 bg-slate-50 group-hover:bg-blue-100 rounded-lg shrink-0 transition-colors">
-                    {getRoleIcon(preset.role)}
-                  </div>
-                  <div className="min-w-0">
-                    <span className="block text-xs font-bold text-slate-800 truncate">{preset.name}</span>
-                    <span className="block text-[10px] text-slate-400 font-mono truncate">{preset.email}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  {(preset as any).region && (
-                    <span className="bg-slate-100 text-slate-500 text-[8px] font-mono font-bold px-1 py-0.5 rounded uppercase">
-                      {(preset as any).region}
-                    </span>
-                  )}
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-600" />
-                </div>
-              </div>
-            ))}
           </div>
 
           <div className="mt-5 pt-4 border-t border-slate-200">

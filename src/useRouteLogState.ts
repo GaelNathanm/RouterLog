@@ -21,6 +21,7 @@ import {
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
   INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
 } from './mockData';
+import { geocodeAddress } from './utils/geocoder';
 
 const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
   const R = 6371e3; // metres
@@ -83,16 +84,6 @@ export function useRouteLogState() {
   // References for automated GPS coordinate Geofencing tracking
   const previousGeofenceState = useRef<{ [driverId: string]: { [regionId: string]: boolean } }>({});
   const isGeofenceInitDone = useRef(false);
-
-  // Enterprise production control: simulation defaults to false in a live app
-  const [isDemoSimulationActive, setIsDemoSimulationActive] = useState<boolean>(() => {
-    const saved = localStorage.getItem('routelog_demo_simulation');
-    return saved === 'true'; // Off by default (false) unless enabled in UI
-  });
-
-  useEffect(() => {
-    localStorage.setItem('routelog_demo_simulation', isDemoSimulationActive ? 'true' : 'false');
-  }, [isDemoSimulationActive]);
 
   // Sync auxiliary states to localStorage as cache
   useEffect(() => {
@@ -473,11 +464,12 @@ export function useRouteLogState() {
     });
   }, [currentUser, impersonatingUser, activeSessionUser]);
 
-  // Real-time GPS movement simulation
+  // Real-time GPS movement simulation is disabled in live production mode
   useEffect(() => {
-    // Look for active routes and move driver towards the next pending stop sequentially
+    // Live system relies purely on actual driver device background GPS telemetry
+    return;
     gpsTickRef.current = setInterval(() => {
-      if (!isDemoSimulationActive) return;
+      if (true) return; // Disabled in live system
       rotas.forEach(async (rota) => {
         if (rota.status === 'active') {
           const stops = rota.stops;
@@ -1249,16 +1241,29 @@ export function useRouteLogState() {
   };
 
   const handleSaveClient = async (client: Cliente) => {
-    await saveCloudClient(client);
+    let finalClient = { ...client };
+    
+    // Always geocode if coordinates are missing, zero, or if the address changed or we want absolute accuracy
+    if (!finalClient.lat || !finalClient.lng || finalClient.lat === 0 || finalClient.lng === 0) {
+      try {
+        const coords = await geocodeAddress(finalClient.address, finalClient.region);
+        finalClient.lat = coords.lat;
+        finalClient.lng = coords.lng;
+      } catch (err) {
+        console.error('[handleSaveClient] Geocoding error:', err);
+      }
+    }
+
+    await saveCloudClient(finalClient);
 
     const newAudit: AuditLogEntry = {
       id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
       adminId: activeSessionUser?.id || 'system',
       adminName: activeSessionUser?.name || 'Sistema',
       action: clients.some(c => c.id === client.id) ? 'Cliente Atualizado' : 'Cliente Criado',
-      targetUserId: 'client_' + client.id,
-      targetUserName: client.name,
-      details: `Cliente ${client.name} no endereço "${client.address}" foi salvo no banco de clientes.`,
+      targetUserId: 'client_' + finalClient.id,
+      targetUserName: finalClient.name,
+      details: `Cliente ${finalClient.name} no endereço "${finalClient.address}" foi salvo no banco de clientes com coordenadas [${finalClient.lat}, ${finalClient.lng}].`,
       timestamp: new Date().toISOString()
     };
     await saveCloudAuditLog(newAudit);
@@ -1614,8 +1619,6 @@ export function useRouteLogState() {
     handleOptimizeRoute,
     handleStartRoute,
     handlePostMessage,
-    resetAllData,
-    isDemoSimulationActive,
-    setIsDemoSimulationActive
+    resetAllData
   };
 }

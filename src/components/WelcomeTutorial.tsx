@@ -105,13 +105,13 @@ export default function WelcomeTutorial({ role, activeTab, onClose, forceOpen = 
           },
           {
             title: "Monitoramento GIS Real-time",
-            description: "Acompanhe seus motoristas no mapa nativo ou mude para o Google Maps Platform para ver rotas otimizadas e telemetria de trânsito simulado em tempo real.",
+            description: "Acompanhe seus motoristas no mapa nativo ou mude para o Google Maps Platform para ver rotas otimizadas e telemetria de trânsito em tempo real.",
             icon: <Map className="w-8 h-8 text-blue-500" />,
             highlightText: "Observabilidade 360°"
           },
           {
             title: "Canal de Rádio e Push Central",
-            description: "Troque mensagens com a equipe em trânsito ou grave áudios que serão reproduzidos no app dos motoristas. E envie notificações push customizadas simulando o Google FCM.",
+            description: "Troque mensagens com a equipe em trânsito ou grave áudios que serão reproduzidos no app dos motoristas. E envie notificações push customizadas via canais Google FCM.",
             icon: <Radio className="w-8 h-8 text-rose-500 animate-bounce" style={{ animationDuration: '3s' }} />,
             highlightText: "Comunicação de Equipe Unificada"
           }

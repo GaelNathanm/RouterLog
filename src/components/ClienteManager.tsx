@@ -4,6 +4,7 @@ import {
   X, Check, AlertTriangle, HelpCircle, Edit3, ShieldAlert 
 } from 'lucide-react';
 import { Cliente } from '../types';
+import { showToast } from '../utils/toast';
 
 interface ClienteManagerProps {
   region: string;
@@ -151,7 +152,7 @@ export default function ClienteManager({
   const handleSaveClientForm = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim() || !formAddress.trim()) {
-      alert('Favor preencher o Nome e Endereço do Cliente.');
+      showToast('Favor preencher o Nome e Endereço do Cliente.', 'warning', 'Cadastro');
       return;
     }
 
@@ -193,7 +194,7 @@ export default function ClienteManager({
 
   const handleCreateRouteFromSelected = () => {
     if (checkedClientIds.length === 0) {
-      alert('Selecione pelo menos um cliente no banco de dados para criar rota.');
+      showToast('Selecione pelo menos um cliente no banco de dados para criar rota.', 'info', 'Operação');
       return;
     }
     const selected = clients.filter(c => checkedClientIds.includes(c.id));
@@ -203,7 +204,7 @@ export default function ClienteManager({
 
   const handleExportClientsCSV = () => {
     if (regionalClients.length === 0) {
-      alert('Nenhum cliente cadastrado nesta região para exportar.');
+      showToast('Nenhum cliente cadastrado nesta região para exportar.', 'warning', 'Exportação');
       return;
     }
 

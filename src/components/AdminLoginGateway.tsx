@@ -125,7 +125,7 @@ export default function AdminLoginGateway({ onLogin, onSuccess }: AdminLoginGate
 
           {showHelper && (
             <div className="p-2.5 bg-slate-950 border border-slate-800 text-slate-400 text-[10px] leading-relaxed rounded-lg">
-              🔑 <strong className="text-white">Dica de Desenvolvimento:</strong> A senha padrão para este ambiente simulado é: <code className="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300 font-mono font-bold">admin2026</code>.
+              🔑 <strong className="text-white">Dica de Acesso:</strong> A senha padrão para o administrador é: <code className="bg-slate-900 px-1.5 py-0.5 rounded text-indigo-300 font-mono font-bold">admin2026</code>.
             </div>
           )}
 

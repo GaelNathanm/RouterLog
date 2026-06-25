@@ -8,6 +8,7 @@ import {
   UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, 
   AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region, Cliente 
 } from '../types';
+import { showToast } from '../utils/toast';
 import { 
   Pause, Play, Volume2, Mic, Square, Truck, UserCheck, ClipboardList, ShieldAlert, User
 } from 'lucide-react';
@@ -17,7 +18,7 @@ import {
 // ==========================================
 export const exportToCSV = (logs: RoutePerformanceLog[], filename = 'relatorio_desempenho_rotas.csv') => {
   if (logs.length === 0) {
-    alert('Nenhum dado de desempenho disponível para exportação.');
+    showToast('Nenhum dado de desempenho disponível para exportação.', 'warning', 'Exportação');
     return;
   }
 
@@ -83,13 +84,13 @@ export const exportToCSV = (logs: RoutePerformanceLog[], filename = 'relatorio_d
 
 export const exportToPDF = (logs: RoutePerformanceLog[], viewTitle = 'Relatório Geral de Desempenho Logístico') => {
   if (logs.length === 0) {
-    alert('Nenhum dado de desempenho disponível para gerar relatório.');
+    showToast('Nenhum dado de desempenho disponível para gerar relatório.', 'warning', 'Exportação PDF');
     return;
   }
 
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
-    alert('Por favor, permita pop-ups no navegador para gerar e imprimir o PDF.');
+    showToast('Por favor, permita pop-ups no navegador para gerar e imprimir o PDF.', 'warning', 'Bloqueador de Pop-ups');
     return;
   }
 
@@ -495,7 +496,7 @@ export function AudioRecorderButton({ onSendAudio }: AudioRecorderButtonProps) {
       }, 1000);
     } catch (err) {
       console.warn('Microphone permission or support error:', err);
-      alert('Não foi possível obter acesso ao microfone. Verifique as configurações de permissões do navegador.');
+      showToast('Não foi possível obter acesso ao microfone. Verifique as configurações de permissões do navegador.', 'error', 'Permissão');
     }
   };
 

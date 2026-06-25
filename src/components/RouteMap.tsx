@@ -118,16 +118,22 @@ export default function RouteMap({
 
     const pts: { lat: number; lng: number }[] = [];
     filteredRoutes.forEach(r => {
-      pts.push({ lat: r.originLat, lng: r.originLng });
-      r.stops.forEach(s => pts.push({ lat: s.lat, lng: s.lng }));
+      if (r.originLat && r.originLng && !isNaN(r.originLat) && !isNaN(r.originLng) && r.originLat !== 0 && r.originLng !== 0) {
+        pts.push({ lat: r.originLat, lng: r.originLng });
+      }
+      r.stops.forEach(s => {
+        if (s.lat && s.lng && !isNaN(s.lat) && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0) {
+          pts.push({ lat: s.lat, lng: s.lng });
+        }
+      });
       
       const drvLoc = locations[r.driverId];
-      if (drvLoc) {
+      if (drvLoc && drvLoc.lat && drvLoc.lng && !isNaN(drvLoc.lat) && !isNaN(drvLoc.lng) && drvLoc.lat !== 0 && drvLoc.lng !== 0) {
         pts.push({ lat: drvLoc.lat, lng: drvLoc.lng });
       }
     });
 
-    if (singleDriverLocation) {
+    if (singleDriverLocation && singleDriverLocation.lat && singleDriverLocation.lng && !isNaN(singleDriverLocation.lat) && !isNaN(singleDriverLocation.lng) && singleDriverLocation.lat !== 0 && singleDriverLocation.lng !== 0) {
       pts.push({ lat: singleDriverLocation.lat, lng: singleDriverLocation.lng });
     }
 

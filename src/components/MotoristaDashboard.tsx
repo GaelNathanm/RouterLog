@@ -10,7 +10,7 @@ import {
 import { 
   Pause, Play, Volume2, Mic, Square, Truck, Navigation, CheckCircle, Phone, ArrowRight, Edit, Pencil,
   MessageSquare, Send, Camera, AlertCircle, MapPin, Map, RefreshCw, Plus, Trash2, X, Compass, Info,
-  Signal, AlertTriangle, SlidersHorizontal, Route, Sparkles, Check, Clock
+  Signal, AlertTriangle, SlidersHorizontal, Route, Sparkles, Check, Clock, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import InteractiveMap from './InteractiveMap';
 import RouteMap from './RouteMap';
@@ -48,6 +48,7 @@ export const GUARIBA_LOCATIONS = [
 
 export function MotoristaDashboard({ user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize }: MotoristaProps) {
   const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos' | 'ativa'>('nova');
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
   const [mobileFocus, setMobileFocus] = useState<'actions' | 'map'>('actions');
   
@@ -1003,8 +1004,111 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
       </div>
 
       {/* Left Column Container */}
-      <div className={`lg:col-span-4 space-y-4 w-full ${mobileFocus === 'actions' ? 'block' : 'hidden lg:block'}`}>
-        {activeRoute && (
+      <div className={`transition-all duration-300 ${isSidebarOpen ? 'lg:col-span-4' : 'lg:col-span-1'} space-y-4 w-full ${mobileFocus === 'actions' ? 'block' : 'hidden lg:block'}`}>
+        
+        {/* If sidebar is CLOSED (collapsed) */}
+        {!isSidebarOpen && (
+          <div className="hidden lg:flex flex-col items-center bg-white border border-slate-200 py-5 px-2 rounded-2xl shadow-md space-y-5 h-full min-h-[500px] w-full">
+            {/* Expand Button */}
+            <button
+              type="button"
+              onClick={() => setIsSidebarOpen(true)}
+              title="Expandir Menu"
+              className="p-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-all cursor-pointer border border-indigo-150/50 hover:scale-105 active:scale-95"
+            >
+              <ChevronRight className="w-5 h-5 font-black" />
+            </button>
+
+            <div className="w-full border-b border-slate-100"></div>
+
+            {/* Icons strip */}
+            <div className="flex flex-col gap-4 w-full items-center">
+              <button
+                onClick={() => { setActiveTab('nova'); setIsSidebarOpen(true); }}
+                title="Nova Rota"
+                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                  activeTab === 'nova' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('salvas'); setIsSidebarOpen(true); }}
+                title={`Minhas Rotas (${myCreatedRoutes.length})`}
+                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                  activeTab === 'salvas' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                <Route className="w-5 h-5" />
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('rotarec'); setIsSidebarOpen(true); }}
+                title={`Rotas Recebidas (${myReceivedRoutes.length})`}
+                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                  activeTab === 'rotarec' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                <Truck className="w-5 h-5" />
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('chat'); setIsSidebarOpen(true); }}
+                title="Suporte Operacional"
+                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                  activeTab === 'chat' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                <MessageSquare className="w-5 h-5" />
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('resumos'); setIsSidebarOpen(true); }}
+                title={`Resumos (${myCompletedRoutes.length})`}
+                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
+                  activeTab === 'resumos' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
+                }`}
+              >
+                <CheckCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            {activeRoute && (
+              <>
+                <div className="w-full border-b border-slate-100 my-2"></div>
+                <button
+                  onClick={() => { setActiveTab('ativa'); setIsSidebarOpen(true); }}
+                  title="Ver Rota Ativa"
+                  className="p-3 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-150/50 rounded-xl transition-all flex items-center justify-center cursor-pointer animate-pulse"
+                >
+                  <Truck className="w-5 h-5" />
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* If sidebar is OPEN (expanded) - or on mobile where we always show full content */}
+        {(isSidebarOpen || mobileFocus === 'actions') && (
+          <div className="space-y-4 w-full">
+            {/* Sidebar Header Panel with Collapse Button */}
+            <div className="flex items-center justify-between bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
+                <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Painel de Ações</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(false)}
+                title="Ocultar Menu"
+                className="hidden lg:flex items-center justify-center p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+              >
+                <ChevronLeft className="w-4.5 h-4.5" />
+              </button>
+            </div>
+
+            {activeRoute && (
           <button
             type="button"
             onClick={() => setActiveTab('ativa')}
@@ -2006,10 +2110,12 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             )}
           </div>
         )}
+          </div>
+        )}
       </div>
 
       {/* Right Column: GPS Tracking & Vector Live Map */}
-      <div className="lg:col-span-8 flex flex-col h-[400px] lg:h-full">
+      <div className={`transition-all duration-300 ${isSidebarOpen ? 'lg:col-span-8' : 'lg:col-span-11'} flex flex-col h-[400px] lg:h-full`}>
         
         {/* Dynamic active trip navigation dashboard overlay */}
         {activeRoute && (

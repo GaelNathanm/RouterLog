@@ -17,11 +17,13 @@ import { VendedorDashboard } from './components/VendedorDashboard';
 import UserProfilePage from './components/UserProfilePage';
 import ControlPanelMockMap from './components/ControlPanelMockMap';
 import { 
-  Network, Play, HelpCircle, EyeOff, ShieldAlert,
+  Network, LayoutDashboard, HelpCircle, EyeOff, ShieldAlert,
   Info, AlertTriangle, AlertCircle, Compass, CheckCircle2, User 
 } from 'lucide-react';
 import { NetworkGpsStatusWidget } from './components/NetworkGpsStatusWidget';
 import { motion, AnimatePresence } from 'motion/react';
+import ToastContainer from './components/ToastContainer';
+import { showToast } from './utils/toast';
 
 export default function App() {
   const {
@@ -64,14 +66,42 @@ export default function App() {
     handleOptimizeRoute,
     handleStartRoute,
     handlePostMessage,
-    resetAllData,
-    isDemoSimulationActive,
-    setIsDemoSimulationActive
+    resetAllData
   } = useRouteLogState();
 
-  const [activeTab, setActiveTab] = useState<'simulation' | 'profile' | 'docs'>('simulation');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'profile' | 'docs'>('dashboard');
   const [fcmToast, setFcmToast] = useState<{ title: string; body: string; type: string } | null>(null);
   const [currentPathname, setCurrentPathname] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
+
+  useEffect(() => {
+    const originalAlert = window.alert;
+    window.alert = (message: string) => {
+      if (!message) return;
+      const lower = message.toLowerCase();
+      let type: 'success' | 'error' | 'info' | 'warning' = 'info';
+      let title = 'Informativo';
+
+      if (lower.includes('sucesso') || lower.includes('concluído') || lower.includes('concluido') || lower.includes('gravado') || lower.includes('excelente') || lower.includes('enviado') || lower.includes('salvas') || lower.includes('adicionados') || lower.includes('finalizada') || lower.includes('iniciada')) {
+        type = 'success';
+        title = 'Sucesso Operacional';
+      } else if (lower.includes('erro') || lower.includes('falha') || lower.includes('limite') || lower.includes('não foi possível') || lower.includes('bloqueado') || lower.includes('não deves') || lower.includes('rejeitado') || lower.includes('instável')) {
+        type = 'error';
+        title = 'Falha / Erro';
+      } else if (lower.includes('atenção') || lower.includes('por favor') || lower.includes('selecione') || lower.includes('necessita') || lower.includes('preencha') || lower.includes('inválido') || lower.includes('vazio') || lower.includes('vazia') || lower.includes('nenhum') || lower.includes('adicionar')) {
+        type = 'warning';
+        title = 'Alerta Operacional';
+      } else {
+        type = 'info';
+        title = 'Notificação';
+      }
+
+      showToast(message, type, title);
+    };
+
+    return () => {
+      window.alert = originalAlert;
+    };
+  }, []);
 
   useEffect(() => {
     const handleLocationChange = () => {
@@ -182,17 +212,17 @@ export default function App() {
 
             <NetworkGpsStatusWidget />
             
-            {/* Core Master Tabs (Simulation vs Profile vs Docs) */}
+            {/* Core Master Tabs (Dashboard vs Profile vs Docs) */}
             <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-250/20 font-mono text-xs">
               <button
-                onClick={() => setActiveTab('simulation')}
+                onClick={() => setActiveTab('dashboard')}
                 className={`px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 font-bold cursor-pointer ${
-                  activeTab === 'simulation' 
+                  activeTab === 'dashboard' 
                     ? 'bg-blue-600 text-white shadow-sm' 
                     : 'text-slate-500 hover:text-slate-950 hover:bg-slate-200/50'
                 }`}
               >
-                <Play className="w-3.5 h-3.5 fill-current" />
+                <LayoutDashboard className="w-3.5 h-3.5" />
                 Painel Operacional
               </button>
               {activeSessionUser && (
@@ -319,9 +349,9 @@ export default function App() {
                 />
               </motion.div>
             ) : (
-              // Tab 1: Real-time simulation board
+              // Tab 1: Operational Dashboard
               <motion.div
-                key="simulation"
+                key="dashboard"
                 initial={{ opacity: 0, y: 15 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -15 }}
@@ -412,8 +442,6 @@ export default function App() {
                           onDeleteRoute={handleDeleteRoute}
                           onOptimize={handleOptimizeRoute}
                           onStartRoute={handleStartRoute}
-                          isDemoSimulationActive={isDemoSimulationActive}
-                          setIsDemoSimulationActive={setIsDemoSimulationActive}
                         />
                       )}
 
@@ -534,6 +562,8 @@ export default function App() {
           onReset={resetAllData}
         />
       )}
+
+      <ToastContainer />
 
     </div>
   );

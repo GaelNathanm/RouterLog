@@ -61,8 +61,6 @@ interface GerenteProps {
   onDeleteRoute: (id: string) => void;
   onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
   onStartRoute: (id: string) => void;
-  isDemoSimulationActive?: boolean;
-  setIsDemoSimulationActive?: (active: boolean) => void;
 }
 
 export function GerenteDashboard({ 
@@ -87,9 +85,7 @@ export function GerenteDashboard({
   onUpdateRoute,
   onDeleteRoute,
   onOptimize,
-  onStartRoute,
-  isDemoSimulationActive = false,
-  setIsDemoSimulationActive
+  onStartRoute
 }: GerenteProps) {
   const [chatInput, setChatInput] = useState('');
   const [activeTab, setActiveTab] = useState<'map' | 'routes' | 'chat' | 'push_config' | 'analytics' | 'clientes'>('map');
@@ -1151,20 +1147,6 @@ export function GerenteDashboard({
                     >
                       <Settings className="w-3.5 h-3.5 text-indigo-300 animate-spin-slow" />
                       <span>Configurar Supabase</span>
-                    </button>
-
-                    {/* Geolocation Simulation Toggle */}
-                    <button
-                      type="button"
-                      onClick={() => setIsDemoSimulationActive?.(!isDemoSimulationActive)}
-                      className={`px-3.5 py-1.5 text-[10.5px] font-extrabold rounded-xl transition-all flex items-center gap-1.5 border cursor-pointer uppercase tracking-wider active:scale-95 ${
-                        isDemoSimulationActive 
-                          ? 'bg-emerald-600 hover:bg-emerald-700 text-emerald-50 border-emerald-500/30 shadow-md shadow-emerald-950/40' 
-                          : 'bg-slate-850 hover:bg-slate-800 text-slate-350 border-slate-755'
-                      }`}
-                    >
-                      <Compass className={`w-3.5 h-3.5 text-white ${isDemoSimulationActive ? 'animate-spin' : ''}`} />
-                      <span>Simulador: {isDemoSimulationActive ? 'ATIVO' : 'OFF'}</span>
                     </button>
 
                     {/* CSV Export Button */}

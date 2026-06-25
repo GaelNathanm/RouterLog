@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { supabase } from '../supabase';
+import { showToast } from '../utils/toast';
 
 interface GoogleAuthButtonProps {
   onAuthError?: (err: string) => void;
@@ -23,7 +24,7 @@ export default function GoogleAuthButton({ onAuthError, isLoading, setIsLoading 
       if (onAuthError) {
         onAuthError(msg);
       } else {
-        alert(msg);
+        showToast(msg, 'error', 'Supabase');
       }
       return;
     }
