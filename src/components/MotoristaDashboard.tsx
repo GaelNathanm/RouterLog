@@ -36,6 +36,7 @@ interface MotoristaProps {
   onStartRoute: (id: string) => void;
   onPostMessage: (text: string, audioUrl?: string) => void;
   onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
+  offlineQueueLength?: number;
 }
 
 export const GUARIBA_LOCATIONS = [
@@ -46,7 +47,7 @@ export const GUARIBA_LOCATIONS = [
   { name: 'Mercearia Popular', address: 'Av. JK, 1100 - Vila Isa', lat: -18.882, lng: -41.972 }
 ];
 
-export function MotoristaDashboard({ user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize }: MotoristaProps) {
+export function MotoristaDashboard({ user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0 }: MotoristaProps) {
   const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos' | 'ativa'>('nova');
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
@@ -57,10 +58,14 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSigned, setHasSigned] = useState(false);
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
+  const [capturedCanhoto, setCapturedCanhoto] = useState<string | null>(null);
+  const [capturedLocal, setCapturedLocal] = useState<string | null>(null);
 
   // Real-world Multi-Photo Confirmation Modal state for clicking any stop map marker
   const [confirmingStop, setConfirmingStop] = useState<Parada | null>(null);
   const [confirmPhotos, setConfirmPhotos] = useState<string[]>([]); // array of base64 photo strings
+  const [modalCapturedCanhoto, setModalCapturedCanhoto] = useState<string | null>(null);
+  const [modalCapturedLocal, setModalCapturedLocal] = useState<string | null>(null);
   
   const modalSignatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [modalIsDrawing, setModalIsDrawing] = useState(false);
@@ -370,6 +375,50 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
     }
   };
 
+  const handleCanhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCapturedCanhoto(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCapturedLocal(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleModalCanhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setModalCapturedCanhoto(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleModalLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setModalCapturedLocal(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   // Route editing states
   const [mEditingRouteId, setMEditingRouteId] = useState<string | null>(null);
   const [mEditingRouteName, setMEditingRouteName] = useState('');
@@ -431,8 +480,8 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
       alert('Por favor, solicite a assinatura digital do cliente na tela do dispositivo.');
       return;
     }
-    if (!capturedPhoto) {
-      alert('Por favor, faça a fotoconferência da mercadoria entregue para anexar como comprovante.');
+    if (!capturedPhoto && !capturedCanhoto && !capturedLocal) {
+      alert('Por favor, faça a fotoconferência de pelo menos um comprovante (mercadoria, canhoto da nota fiscal ou local de entrega).');
       return;
     }
 
@@ -449,7 +498,10 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
       routeId,
       stopId,
       signatureUrl: signatureBase64,
-      photoUrl: capturedPhoto,
+      photoUrl: capturedPhoto || capturedCanhoto || capturedLocal || '',
+      canhotoPhotoUrl: capturedCanhoto || undefined,
+      localPhotoUrl: capturedLocal || undefined,
+      photoUrls: [capturedPhoto, capturedCanhoto, capturedLocal].filter(Boolean) as string[],
       completedAt: new Date().toISOString()
     };
 
@@ -472,7 +524,10 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
           ...updatedStops[stopIndex],
           status: 'completed' as const,
           signatureUrl: signatureBase64,
-          photoUrl: capturedPhoto,
+          photoUrl: payload.photoUrl,
+          canhotoPhotoUrl: payload.canhotoPhotoUrl,
+          localPhotoUrl: payload.localPhotoUrl,
+          photoUrls: payload.photoUrls,
           completedAt: payload.completedAt
         };
 
@@ -497,7 +552,10 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
           ...updatedStops[stopIndex],
           status: 'completed' as const,
           signatureUrl: signatureBase64,
-          photoUrl: capturedPhoto,
+          photoUrl: payload.photoUrl,
+          canhotoPhotoUrl: payload.canhotoPhotoUrl,
+          localPhotoUrl: payload.localPhotoUrl,
+          photoUrls: payload.photoUrls,
           completedAt: payload.completedAt
         };
 
@@ -520,12 +578,14 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
               payload
             });
           }
-          alert('Sua assinatura e foto foram guardadas offline por segurança e serão enviadas quando a rede normalizar.');
+          alert('Sua assinatura e fotos foram guardadas offline por segurança e serão enviadas quando a rede normalizar.');
         }
       }
     }
 
     setCapturedPhoto(null);
+    setCapturedCanhoto(null);
+    setCapturedLocal(null);
     setHasSigned(false);
   };
 
@@ -623,58 +683,47 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const [isValidating, setIsValidating] = useState(false);
   const [isValidated, setIsValidated] = useState(false);
 
-  const fetchAddressPredictions = (inputStr: string) => {
-    if (!inputStr || inputStr.trim().length < 3) {
+  const fetchAddressPredictions = async (inputStr: string) => {
+    if (!inputStr || inputStr.trim().length < 2) {
       setAddressPredictions([]);
       return;
     }
-
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps && (window as any).google.maps.places) {
-      try {
-        const service = new (window as any).google.maps.places.AutocompleteService();
-        service.getPlacePredictions(
-          { input: inputStr, componentRestrictions: { country: 'br' } },
-          (predictions: any, status: any) => {
-            if (status === 'OK' && predictions) {
-              setAddressPredictions(
-                predictions.map((p: any) => ({
-                  description: p.description,
-                  placeId: p.place_id,
-                }))
-              );
-            } else {
-              setAddressPredictions([]);
-            }
-          }
+    try {
+      const response = await fetch(`/api/gis/autocomplete?input=${encodeURIComponent(inputStr)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setAddressPredictions(
+          data.map((item: any) => ({
+            description: item.description,
+            placeId: item.placeId,
+          }))
         );
-      } catch (e) {
-        console.warn('Autocomplete service failed:', e);
       }
+    } catch (e) {
+      console.warn('Autocomplete service failed:', e);
     }
   };
 
-  const handleSelectPrediction = (address: string, placeId: string) => {
+  const handleSelectPrediction = async (address: string, placeId: string) => {
     setClientAddress(address);
     setAddressPredictions([]);
     setIsValidated(true);
-
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps) {
-      try {
-        const geocoder = new (window as any).google.maps.Geocoder();
-        geocoder.geocode({ placeId: placeId }, (results: any, status: any) => {
-          if (status === 'OK' && results && results[0]) {
-            const loc = results[0].geometry.location;
-            setCustomLat(loc.lat());
-            setCustomLng(loc.lng());
-            console.log(`[Google Autocomplete Places] Set coordinates for ${address} to:`, loc.lat(), loc.lng());
-          }
-        });
-      } catch (err) {
-        console.warn('Geocoding by placeId failed, fallback to standard geocodeAddress:', err);
-        geocodeAddress(address, false);
+    try {
+      const response = await fetch('/api/gis/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.valid) {
+          setCustomLat(data.lat);
+          setCustomLng(data.lng);
+          setClientAddress(data.standardizedAddress);
+        }
       }
-    } else {
-      geocodeAddress(address, false);
+    } catch (err) {
+      console.warn('GIS validator failed:', err);
     }
   };
 
@@ -919,6 +968,13 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                 : 'Sinal GPS instável (Sincronização pendente)'}
             </span>
           </div>
+
+          {offlineQueueLength > 0 && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[11px] font-extrabold rounded-xl animate-bounce">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>{offlineQueueLength} {offlineQueueLength === 1 ? 'Pendente' : 'Pendentes'}</span>
+            </div>
+          )}
 
           <button
             type="button"
@@ -2037,61 +2093,159 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                       </div>
 
                       {/* PHOTO DELIVERY CONFERENCE WITH DEVICE NATIVE CAMERA */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Passo 2: Foto de Comprovante de Carga</span>
-                          {capturedPhoto && (
-                            <button
-                              type="button"
-                              onClick={() => setCapturedPhoto(null)}
-                              className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
-                            >
-                              <RefreshCw className="w-3.5 h-3.5" />
-                              Recapturar
-                            </button>
-                          )}
+                      <div className="space-y-3">
+                        <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider block">Passo 2: Comprovação Digital (Mídia POD)</span>
+                        
+                        <div className="grid grid-cols-1 gap-3">
+                          
+                          {/* 1. CANHOTO DA NOTA FISCAL */}
+                          <div className="border border-slate-200 bg-white p-3.5 rounded-2xl shadow-xs space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-705 flex items-center gap-1.5">
+                                📝 Canhoto da Nota Fiscal <span className="text-[9px] text-indigo-650 bg-indigo-50 border border-indigo-100 font-extrabold px-1.5 py-0.5 rounded uppercase">Obrigatório</span>
+                              </span>
+                              {capturedCanhoto && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCapturedCanhoto(null)}
+                                  className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Trocar
+                                </button>
+                              )}
+                            </div>
+                            
+                            {!capturedCanhoto ? (
+                              <div>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  id="canhoto-capture-input"
+                                  className="hidden"
+                                  onChange={handleCanhotoFileChange}
+                                />
+                                <label
+                                  htmlFor="canhoto-capture-input"
+                                  className="w-full min-h-[46px] bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 text-slate-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs active:scale-98 select-none"
+                                >
+                                  <Camera className="w-4 h-4 text-slate-400" />
+                                  Fotografar Canhoto Assinado
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="relative border border-emerald-200 bg-emerald-50/10 p-1 rounded-xl overflow-hidden shadow-inner">
+                                <img
+                                  src={capturedCanhoto}
+                                  alt="Canhoto da NF"
+                                  referrerPolicy="no-referrer"
+                                  className="w-full aspect-[16/9] object-cover rounded-lg"
+                                />
+                                <span className="absolute bottom-2 right-2 bg-emerald-600 text-white font-mono font-black text-[8px] px-1.5 py-0.5 rounded uppercase">Salvo</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 2. FOTO DO ESTABELECIMENTO / LOCAL */}
+                          <div className="border border-slate-200 bg-white p-3.5 rounded-2xl shadow-xs space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-705 flex items-center gap-1.5">
+                                🏠 Fachada / Local de Entrega <span className="text-[9px] text-indigo-650 bg-indigo-50 border border-indigo-100 font-extrabold px-1.5 py-0.5 rounded uppercase">Obrigatório</span>
+                              </span>
+                              {capturedLocal && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCapturedLocal(null)}
+                                  className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Trocar
+                                </button>
+                              )}
+                            </div>
+                            
+                            {!capturedLocal ? (
+                              <div>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  id="local-capture-input"
+                                  className="hidden"
+                                  onChange={handleLocalFileChange}
+                                />
+                                <label
+                                  htmlFor="local-capture-input"
+                                  className="w-full min-h-[46px] bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 text-slate-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs active:scale-98 select-none"
+                                >
+                                  <Camera className="w-4 h-4 text-slate-400" />
+                                  Fotografar Fachada / Carga
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="relative border border-emerald-200 bg-emerald-50/10 p-1 rounded-xl overflow-hidden shadow-inner">
+                                <img
+                                  src={capturedLocal}
+                                  alt="Fachada do Local"
+                                  referrerPolicy="no-referrer"
+                                  className="w-full aspect-[16/9] object-cover rounded-lg"
+                                />
+                                <span className="absolute bottom-2 right-2 bg-emerald-600 text-white font-mono font-black text-[8px] px-1.5 py-0.5 rounded uppercase">Salvo</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 3. COMPROVANTE ADICIONAL / MERCADORIA (OPCIONAL) */}
+                          <div className="border border-slate-200 bg-white p-3.5 rounded-2xl shadow-xs space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-705 flex items-center gap-1.5">
+                                📦 Foto Adicional da Mercadoria <span className="text-[9px] text-slate-500 bg-slate-100 border border-slate-200 font-extrabold px-1.5 py-0.5 rounded uppercase">Opcional</span>
+                              </span>
+                              {capturedPhoto && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCapturedPhoto(null)}
+                                  className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
+                                >
+                                  <RefreshCw className="w-3 h-3" />
+                                  Trocar
+                                </button>
+                              )}
+                            </div>
+                            
+                            {!capturedPhoto ? (
+                              <div>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  capture="environment"
+                                  id="photo-capture-input"
+                                  className="hidden"
+                                  onChange={handlePhotoFileChange}
+                                />
+                                <label
+                                  htmlFor="photo-capture-input"
+                                  className="w-full min-h-[46px] bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 text-slate-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs active:scale-98 select-none"
+                                >
+                                  <Camera className="w-4 h-4 text-slate-400" />
+                                  Fotografar Mercadoria
+                                </label>
+                              </div>
+                            ) : (
+                              <div className="relative border border-slate-200 bg-slate-50 p-1 rounded-xl overflow-hidden shadow-inner">
+                                <img
+                                  src={capturedPhoto}
+                                  alt="Mercadoria Carga"
+                                  referrerPolicy="no-referrer"
+                                  className="w-full aspect-[16/9] object-cover rounded-lg"
+                                />
+                                <span className="absolute bottom-2 right-2 bg-slate-500 text-white font-mono font-black text-[8px] px-1.5 py-0.5 rounded uppercase">Anexo</span>
+                              </div>
+                            )}
+                          </div>
+
                         </div>
-
-                        {!capturedPhoto ? (
-                          <div className="border border-dashed border-slate-300 rounded-2xl bg-slate-50/50 p-6 flex flex-col items-center justify-center text-center gap-3">
-                            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 border border-slate-200">
-                              <Camera className="w-6 h-6" />
-                            </div>
-                            <div className="space-y-1">
-                              <p className="font-extrabold text-slate-700 text-[11px]">Fotoconferência de Carga</p>
-                              <p className="text-[9px] text-slate-400 max-w-[220px]">Registre uma imagem nítida da mercadoria entregue no local do recebedor.</p>
-                            </div>
-
-                            {/* Native camera trigger input */}
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              id="photo-capture-input-panel"
-                              className="hidden"
-                              onChange={handlePhotoFileChange}
-                            />
-                            <label
-                              htmlFor="photo-capture-input-panel"
-                              className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/50 text-indigo-700 font-extrabold rounded-xl shadow-sm cursor-pointer select-none active:scale-95 transition-all text-[11px] uppercase tracking-wider flex items-center gap-1.5"
-                            >
-                              <Camera className="w-4 h-4 text-indigo-600" />
-                              Capturar da Câmera
-                            </label>
-                          </div>
-                        ) : (
-                          <div className="relative border border-slate-200 bg-slate-50 p-1.5 rounded-2xl overflow-hidden shadow-sm">
-                            <img
-                              src={capturedPhoto}
-                              alt="Comprovante de entrega"
-                              referrerPolicy="no-referrer"
-                              className="w-full aspect-[4/3] object-cover rounded-xl border border-slate-200/50"
-                            />
-                            <div className="absolute top-3 right-3 flex gap-1.5">
-                              <span className="bg-emerald-500/90 text-white font-mono font-black text-[9px] px-2 py-0.5 rounded uppercase shadow-sm select-none">FOTO CAPTURADA</span>
-                            </div>
-                          </div>
-                        )}
                       </div>
 
                       {/* CONCLUDE SUBMIT ACTION BUTTON */}

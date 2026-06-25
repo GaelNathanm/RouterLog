@@ -180,6 +180,46 @@ export function GerenteDashboard({
   const [gIsValidated, setGIsValidated] = useState(false);
   const [gEditingRouteId, setGEditingRouteId] = useState<string | null>(null);
 
+  // High Precision GIS Routing & Truck Restriction States
+  const [gVehicleHeight, setGVehicleHeight] = useState<string>('4.2');
+  const [gVehicleWeight, setGVehicleWeight] = useState<string>('12.0');
+  const [gisDirections, setGisDirections] = useState<any>(null);
+  const [isGisCalculating, setIsGisCalculating] = useState(false);
+
+  useEffect(() => {
+    if (gStops.length === 0) {
+      setGisDirections(null);
+      return;
+    }
+    const fetchGisDirections = async () => {
+      setIsGisCalculating(true);
+      try {
+        const response = await fetch('/api/gis/directions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stops: gStops,
+            originLat: gOriginLat,
+            originLng: gOriginLng,
+            vehicleHeight: Number(gVehicleHeight || 4.2),
+            vehicleWeight: Number(gVehicleWeight || 12)
+          })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setGisDirections(data);
+        }
+      } catch (err) {
+        console.warn('GIS Directions load error:', err);
+      } finally {
+        setIsGisCalculating(false);
+      }
+    };
+
+    const timer = setTimeout(fetchGisDirections, 500);
+    return () => clearTimeout(timer);
+  }, [gStops, gOriginLat, gOriginLng, gVehicleHeight, gVehicleWeight]);
+
   // Client Management States
   const [clientSubTab, setClientSubTab] = useState<'database' | 'planner'>('database');
   const [clientsSearch, setClientsSearch] = useState('');
@@ -196,52 +236,45 @@ export function GerenteDashboard({
   const [cFormAddressPredictions, setCEAddrPredictions] = useState<{ description: string; placeId: string }[]>([]);
   const [cFormIsValidated, setCFormIsValidated] = useState(false);
 
-  const cFetchAddressPredictions = (inputStr: string) => {
-    if (!inputStr || inputStr.trim().length < 3) {
+  const cFetchAddressPredictions = async (inputStr: string) => {
+    if (!inputStr || inputStr.trim().length < 2) {
       setCEAddrPredictions([]);
       return;
     }
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps && (window as any).google.maps.places) {
-      try {
-        const service = new (window as any).google.maps.places.AutocompleteService();
-        service.getPlacePredictions(
-          { input: inputStr, componentRestrictions: { country: 'br' } },
-          (predictions: any, status: any) => {
-            if (status === 'OK' && predictions) {
-              setCEAddrPredictions(
-                predictions.map((p: any) => ({
-                  description: p.description,
-                  placeId: p.place_id,
-                }))
-              );
-            } else {
-              setCEAddrPredictions([]);
-            }
-          }
-        );
-      } catch (e) {
-        console.warn('Client autocomp fail:', e);
+    try {
+      const response = await fetch(`/api/gis/autocomplete?input=${encodeURIComponent(inputStr)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setCEAddrPredictions(data.map((item: any) => ({
+          description: item.description,
+          placeId: item.placeId
+        })));
       }
+    } catch (e) {
+      console.warn('Client autocomp fail:', e);
     }
   };
 
-  const cHandleSelectPrediction = (address: string, placeId: string) => {
+  const cHandleSelectPrediction = async (address: string, placeId: string) => {
     setCFormAddress(address);
     setCEAddrPredictions([]);
     setCFormIsValidated(true);
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps) {
-      try {
-        const geocoder = new (window as any).google.maps.Geocoder();
-        geocoder.geocode({ placeId: placeId }, (results: any, status: any) => {
-          if (status === 'OK' && results && results[0]) {
-            const loc = results[0].geometry.location;
-            setCFormLat(loc.lat());
-            setCFormLng(loc.lng());
-          }
-        });
-      } catch (err) {
-        console.warn('Client form geocoder failed:', err);
+    try {
+      const response = await fetch('/api/gis/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.valid) {
+          setCFormLat(data.lat);
+          setCFormLng(data.lng);
+          setCFormAddress(data.standardizedAddress);
+        }
       }
+    } catch (err) {
+      console.warn('Client form geocoder failed:', err);
     }
   };
 
@@ -350,53 +383,46 @@ export function GerenteDashboard({
     setClientSubTab('planner');
   };
 
-  // Address places suggestions for Gerente view
-  const gFetchAddressPredictions = (inputStr: string) => {
-    if (!inputStr || inputStr.trim().length < 3) {
+  // Address places suggestions for Gerente view via server-side GIS Autocomplete
+  const gFetchAddressPredictions = async (inputStr: string) => {
+    if (!inputStr || inputStr.trim().length < 2) {
       setGAddressPredictions([]);
       return;
     }
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps && (window as any).google.maps.places) {
-      try {
-        const service = new (window as any).google.maps.places.AutocompleteService();
-        service.getPlacePredictions(
-          { input: inputStr, componentRestrictions: { country: 'br' } },
-          (predictions: any, status: any) => {
-            if (status === 'OK' && predictions) {
-              setGAddressPredictions(
-                predictions.map((p: any) => ({
-                  description: p.description,
-                  placeId: p.place_id,
-                }))
-              );
-            } else {
-              setGAddressPredictions([]);
-            }
-          }
-        );
-      } catch (e) {
-        console.warn('Gerente autocomplete failed:', e);
+    try {
+      const response = await fetch(`/api/gis/autocomplete?input=${encodeURIComponent(inputStr)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setGAddressPredictions(data.map((item: any) => ({
+          description: item.description,
+          placeId: item.placeId
+        })));
       }
+    } catch (e) {
+      console.warn('Gerente autocomplete failed:', e);
     }
   };
 
-  const gHandleSelectPrediction = (address: string, placeId: string) => {
+  const gHandleSelectPrediction = async (address: string, placeId: string) => {
     setGClientAddress(address);
     setGAddressPredictions([]);
     setGIsValidated(true);
-    if (typeof window !== 'undefined' && (window as any).google && (window as any).google.maps) {
-      try {
-        const geocoder = new (window as any).google.maps.Geocoder();
-        geocoder.geocode({ placeId: placeId }, (results: any, status: any) => {
-          if (status === 'OK' && results && results[0]) {
-            const loc = results[0].geometry.location;
-            setGCustomLat(loc.lat());
-            setGCustomLng(loc.lng());
-          }
-        });
-      } catch (err) {
-        console.warn('Gerente geocoder by placeId failed:', err);
+    try {
+      const response = await fetch('/api/gis/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.valid) {
+          setGCustomLat(data.lat);
+          setGCustomLng(data.lng);
+          setGClientAddress(data.standardizedAddress);
+        }
       }
+    } catch (err) {
+      console.warn('Gerente geocoder by placeId failed:', err);
     }
   };
 
@@ -1810,6 +1836,34 @@ export function GerenteDashboard({
                           </span>
                         )}
                       </div>
+
+                      {/* Truck size and weight constraints for GIS Route Validation */}
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <div>
+                          <label className="block text-slate-450 font-semibold mb-1 uppercase text-[8px] tracking-wider">Altura Max (m)</label>
+                          <input 
+                            type="number" 
+                            step="0.1" 
+                            min="1.0"
+                            max="6.0"
+                            value={gVehicleHeight}
+                            onChange={e => setGVehicleHeight(e.target.value)}
+                            className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-805 text-xs font-bold shadow-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-450 font-semibold mb-1 uppercase text-[8px] tracking-wider">Peso Max (toneladas)</label>
+                          <input 
+                            type="number" 
+                            step="0.5" 
+                            min="1.0"
+                            max="50.0"
+                            value={gVehicleWeight}
+                            onChange={e => setGVehicleWeight(e.target.value)}
+                            className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 rounded-xl p-2.5 bg-white text-slate-805 text-xs font-bold shadow-sm"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1967,6 +2021,89 @@ export function GerenteDashboard({
                         )}
                       </div>
                     </div>
+
+                    {/* Card A3: Painel de Roteirização Inteligente & GIS de Alta Precisão */}
+                    {gStops.length > 0 && (
+                      <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-4.5 rounded-2xl border border-indigo-900 shadow-lg space-y-3.5">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-5 h-5 rounded bg-indigo-500 text-white flex items-center justify-center text-[10px] font-black">GIS</span>
+                            <span className="font-extrabold text-[11px] uppercase tracking-wider font-mono text-indigo-200">
+                              Roteirização Inteligente & Trajetória
+                            </span>
+                          </div>
+                          {isGisCalculating ? (
+                            <span className="text-[9px] font-mono text-indigo-400 animate-pulse font-bold uppercase">Calculando...</span>
+                          ) : (
+                            <span className="text-[9px] font-mono text-emerald-400 font-bold uppercase">✓ Ativo</span>
+                          )}
+                        </div>
+
+                        {gisDirections ? (
+                          <div className="space-y-3 font-sans text-xs">
+                            {/* Summary row */}
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                              <div className="bg-white/5 border border-white/10 p-2 rounded-xl">
+                                <span className="block text-[8px] text-slate-400 uppercase font-mono">Distância Real</span>
+                                <strong className="text-xs font-black text-indigo-200">{gisDirections.distanceKm} km</strong>
+                              </div>
+                              <div className="bg-white/5 border border-white/10 p-2 rounded-xl">
+                                <span className="block text-[8px] text-slate-400 uppercase font-mono">Tempo c/ Trânsito</span>
+                                <strong className="text-xs font-black text-indigo-200">{gisDirections.durationMinutes} min</strong>
+                              </div>
+                              <div className="bg-white/5 border border-white/10 p-2 rounded-xl">
+                                <span className="block text-[8px] text-slate-400 uppercase font-mono">Pedágios (Tolls)</span>
+                                <strong className="text-xs font-black text-indigo-200">R$ {gisDirections.tollsTotalBrl.toFixed(2)}</strong>
+                              </div>
+                            </div>
+
+                            {/* Traffic and Road state */}
+                            <div className="bg-indigo-900/40 p-2 rounded-xl border border-indigo-800/30 flex items-center justify-between text-[10px]">
+                              <span className="text-slate-350">Fator Tráfego (Live):</span>
+                              <span className="font-bold font-mono text-indigo-300">{gisDirections.trafficState}</span>
+                            </div>
+
+                            {/* Warnings list */}
+                            {gisDirections.warnings && gisDirections.warnings.length > 0 && (
+                              <div className="bg-rose-950/50 border border-rose-800/60 p-3 rounded-xl space-y-1">
+                                <span className="block text-[8px] text-rose-300 font-black uppercase tracking-wider font-mono">⚠️ RESTRIÇÕES E ALERTAS DE VIAS</span>
+                                <ul className="space-y-1 text-[9.5px] text-rose-100 font-medium">
+                                  {gisDirections.warnings.map((warn: string, wIdx: number) => (
+                                    <li key={wIdx} className="flex items-start gap-1">
+                                      <span className="text-rose-400 shrink-0">•</span>
+                                      <span>{warn}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {/* Steplist preview */}
+                            <div className="space-y-1">
+                              <span className="block text-[8px] text-indigo-350 font-black uppercase tracking-wider font-mono">PASSOS DA JORNADA LOGÍSTICA</span>
+                              <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                                {gisDirections.steps.map((step: any, sIdx: number) => (
+                                  <div key={sIdx} className="bg-white/5 border border-white/5 p-2 rounded-xl flex items-start gap-2">
+                                    <span className="text-[9px] font-bold font-mono bg-indigo-900 text-indigo-200 px-1.5 py-0.5 rounded shrink-0">
+                                      {step.index}
+                                    </span>
+                                    <div className="min-w-0 flex-1 leading-tight">
+                                      <div className="flex justify-between items-center flex-wrap gap-1">
+                                        <strong className="text-slate-200 truncate block text-[10px]">{step.targetName}</strong>
+                                        <span className="text-[9px] font-mono text-slate-450">{step.distanceKm} km</span>
+                                      </div>
+                                      <p className="text-[9px] text-slate-400 italic mt-1">{step.instructions}</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-4 text-slate-400 text-xs">Aguardando dados de paradas...</div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Compile & Despatch Route Buttons */}
                     <div className="flex gap-2 pt-2 border-t border-slate-200/60">

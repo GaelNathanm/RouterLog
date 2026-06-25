@@ -54,6 +54,7 @@ export function useRouteLogState() {
   const [pushLogs, setPushLogs] = useState<PushDeliveryLog[]>(INITIAL_PUSH_LOGS);
   const [regions, setRegions] = useState<Region[]>(INITIAL_REGIONS);
   const [clients, setClients] = useState<Cliente[]>(INITIAL_CLIENTS);
+  const [offlineQueueLength, setOfflineQueueLength] = useState<number>(0);
 
   const [pushConfig, setPushConfig] = useState<PushConfig>(() => {
     const saved = localStorage.getItem('routelog_push_config');
@@ -261,10 +262,14 @@ export function useRouteLogState() {
         const data = event.data;
         if (!data) return;
 
-        if (data.type === 'SYNC_PENDING_QUEUE') {
+        if (data.type === 'DELIVERY_QUEUED_SUCCESS') {
+          console.log('[useRouteLogState] SW confirmed offline delivery queued:', data.payload);
+          setOfflineQueueLength(data.queueLength || 0);
+        } else if (data.type === 'SYNC_PENDING_QUEUE') {
+          setOfflineQueueLength(0);
           console.log('[useRouteLogState] SW requested syncing of queue:', data.queue);
           for (const item of data.queue) {
-            const { routeId, stopId, signatureUrl, photoUrl, completedAt } = item;
+            const { routeId, stopId, signatureUrl, photoUrl, completedAt, canhotoPhotoUrl, localPhotoUrl, photoUrls } = item;
             
             // Find current route in latest state
             const route = rotas.find(r => r.id === routeId);
@@ -277,6 +282,9 @@ export function useRouteLogState() {
                   status: 'completed' as const,
                   signatureUrl,
                   photoUrl,
+                  canhotoPhotoUrl: canhotoPhotoUrl || undefined,
+                  localPhotoUrl: localPhotoUrl || undefined,
+                  photoUrls: photoUrls || undefined,
                   completedAt
                 };
 
@@ -408,9 +416,23 @@ export function useRouteLogState() {
         console.warn('[Supabase Sync Offline] Clients subscription currently unavailable (working with offline/cache data):', err.message);
       });
 
+      // Subscribe to breadcrumbs in real-time
+      const unsubBreadcrumbs = subscribeToCollection<{ driverId: string; trail: { lat: number; lng: number; timestamp: string }[] }>('breadcrumbs', (list) => {
+        const map: { [driverId: string]: { lat: number; lng: number }[] } = {};
+        list.forEach(b => {
+          if (b && b.driverId) {
+            map[b.driverId] = b.trail || [];
+          }
+        });
+        setBreadcrumbs(map);
+      }, (err) => {
+        console.warn('[Firestore Sync] Breadcrumbs subscription currently unavailable:', err.message);
+      });
+
       unsubsRef.current = [
         unsubUsers, unsubRotas, unsubLocations, unsubChats, 
-        unsubNotifs, unsubAudits, unsubPerformance, unsubPushLogs, unsubRegions, unsubClients
+        unsubNotifs, unsubAudits, unsubPerformance, unsubPushLogs, unsubRegions, unsubClients,
+        unsubBreadcrumbs
       ];
     };
 
@@ -608,11 +630,11 @@ export function useRouteLogState() {
                 };
               });
 
-              // Geofencing Check (Alert close drivers)
+              // Geofencing Check (Alert close drivers) - 100 meters high-precision virtual fence
               const distToStop = getDistanceInMeters(nextLat, nextLng, targetStop.lat, targetStop.lng);
-              if (distToStop <= 500 && targetStop.status === 'pending') {
+              if (distToStop <= 100 && targetStop.status === 'pending') {
                 const updatedStops = stops.map((item, sIdx) => 
-                  sIdx === currentStopIdx ? { ...item, status: 'Chegando' as const } : item
+                  sIdx === currentStopIdx ? { ...item, status: 'Chegando' as const, arrivalTime: new Date().toISOString() } : item
                 );
 
                 const updatedRota: Rota = {
@@ -621,8 +643,8 @@ export function useRouteLogState() {
                 };
                 await saveCloudRoute(updatedRota);
 
-                const titleStr = 'Motorista Próximo - Geofence 📍';
-                const bodyStr = `O condutor ${rota.driverName} atingiu o raio de 500m do cliente "${targetStop.clientName}". Status atualizado para 'Chegando'.`;
+                const titleStr = 'Cerca Virtual - Chegada Automatizada 📍';
+                const bodyStr = `O condutor ${rota.driverName} entrou na cerca virtual de 100m do cliente "${targetStop.clientName}". Entrada registrada automaticamente às ${new Date().toLocaleTimeString('pt-BR')}.`;
 
                 const newNotif: NotificationLog = {
                   id: `notif_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
@@ -1619,6 +1641,8 @@ export function useRouteLogState() {
     handleOptimizeRoute,
     handleStartRoute,
     handlePostMessage,
-    resetAllData
+    resetAllData,
+    offlineQueueLength,
+    setOfflineQueueLength
   };
 }

@@ -71,7 +71,7 @@
         "senderName": "string"
       }
     },
-    "pushLogs": {
+    "push_logs": {
       "description": "Relatório de disparos de notificações push do Firebase Cloud Messaging simulados",
       "fields": {
         "id": "string",
@@ -85,7 +85,7 @@
         "type": "string"
       }
     },
-    "auditLogs": {
+    "audit_logs": {
       "description": "Log de auditoria das ações administrativas",
       "fields": {
         "id": "string",
@@ -98,7 +98,7 @@
         "timestamp": "string"
       }
     },
-    "performanceLogs": {
+    "performance_logs": {
       "description": "Métricas de desempenho e telemetria de viagens finalizadas",
       "fields": {
         "id": "string",
@@ -118,6 +118,13 @@
         "averageTimePerStopMinutes": "number",
         "status": "string",
         "stopTelemetry": "array"
+      }
+    },
+    "breadcrumbs": {
+      "description": "Histórico de telemetria e rastro de rotas dos condutores",
+      "fields": {
+        "driverId": "string",
+        "trail": "array"
       }
     }
   }

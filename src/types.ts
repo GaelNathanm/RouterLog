@@ -58,6 +58,8 @@ export interface Parada {
   signatureUrl?: string; // base64 interactive canvas digital signature
   photoUrl?: string;     // base64 device camera photo proof (fotoconferência)
   photoUrls?: string[];    // up to 5 digital photos for delivery conference
+  canhotoPhotoUrl?: string; // base64 photo of the invoice/receipt receipt (canhoto nota fiscal)
+  localPhotoUrl?: string;   // base64 photo of the delivery site/establishment
   completedAt?: string;  // completion ISO timestamp
 }
 

@@ -33,6 +33,7 @@ export default function App() {
     breadcrumbs,
     chats,
     notifications,
+    offlineQueueLength,
     auditLogs,
     performanceLogs,
     setPerformanceLogs,
@@ -458,6 +459,7 @@ export default function App() {
                           onStartRoute={handleStartRoute}
                           onPostMessage={handlePostMessage}
                           onOptimize={handleOptimizeRoute}
+                          offlineQueueLength={offlineQueueLength}
                         />
                       )}
 

@@ -62,66 +62,51 @@ export default function ClienteManager({
     );
   });
 
-  // Predictions for form address
-  const fetchAddressPredictions = (inputStr: string) => {
-    if (!inputStr || inputStr.trim().length < 3) {
+  // Predictions for form address via server-side GIS Autocomplete
+  const fetchAddressPredictions = async (inputStr: string) => {
+    if (!inputStr || inputStr.trim().length < 2) {
       setAddressPredictions([]);
       return;
     }
-    if (
-      typeof window !== 'undefined' && 
-      (window as any).google && 
-      (window as any).google.maps && 
-      (window as any).google.maps.places
-    ) {
-      try {
-        const service = new (window as any).google.maps.places.AutocompleteService();
-        service.getPlacePredictions(
-          { input: inputStr, componentRestrictions: { country: 'br' } },
-          (predictions: any, status: any) => {
-            if (status === 'OK' && predictions) {
-              setAddressPredictions(
-                predictions.map((p: any) => ({
-                  description: p.description,
-                  placeId: p.place_id,
-                }))
-              );
-            } else {
-              setAddressPredictions([]);
-            }
-          }
+    try {
+      const response = await fetch(`/api/gis/autocomplete?input=${encodeURIComponent(inputStr)}`);
+      if (response.ok) {
+        const data = await response.json();
+        setAddressPredictions(
+          data.map((item: any) => ({
+            description: item.description,
+            placeId: item.placeId,
+          }))
         );
-      } catch (e) {
-        console.warn('AutoComplete predictions fetch failed:', e);
       }
+    } catch (e) {
+      console.warn('AutoComplete predictions fetch failed:', e);
     }
   };
 
-  const handleSelectPrediction = (address: string, placeId: string) => {
+  const handleSelectPrediction = async (address: string, placeId: string) => {
     setFormAddress(address);
     setAddressPredictions([]);
     setIsValidating(true);
-    if (
-      typeof window !== 'undefined' && 
-      (window as any).google && 
-      (window as any).google.maps
-    ) {
-      try {
-        const geocoder = new (window as any).google.maps.Geocoder();
-        geocoder.geocode({ placeId }, (results: any, status: any) => {
-          setIsValidating(false);
-          if (status === 'OK' && results && results[0]) {
-            const loc = results[0].geometry.location;
-            setFormLat(loc.lat());
-            setFormLng(loc.lng());
-          }
-        });
-      } catch (err) {
-        setIsValidating(false);
-        console.warn('Geocoder failed to resolve place ID:', err);
-      }
-    } else {
+    try {
+      const response = await fetch('/api/gis/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address })
+      });
       setIsValidating(false);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.valid) {
+          setFormLat(data.lat);
+          setFormLng(data.lng);
+          setFormAddress(data.standardizedAddress);
+          showToast(`Endereço validado: CEP ${data.cep} e geolocalização exata registrados!`, 'success', 'Precisão GIS');
+        }
+      }
+    } catch (err) {
+      setIsValidating(false);
+      console.warn('GIS Validator failed to resolve:', err);
     }
   };
 
@@ -656,7 +641,7 @@ export default function ClienteManager({
                 />
                 {isValidating && (
                   <span className="text-[10px] text-amber-600 animate-pulse block mt-1 font-semibold">
-                    Geocodificando endereço via Maps API...
+                    Validando CEP e obtendo geolocalização de alta precisão (GIS)...
                   </span>
                 )}
                 {addressPredictions.length > 0 && (
