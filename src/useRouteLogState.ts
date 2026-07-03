@@ -5,11 +5,16 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { 
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
+import { 
   seedDatabaseIfEmpty, saveCloudUser, saveCloudRoute, deleteCloudRoute, 
   saveCloudGPSLocation, saveCloudChat, saveCloudNotification, 
   saveCloudAuditLog, saveCloudPerformanceLog, saveCloudPushLog, 
   resetCloudDatabaseAll, saveCloudRegion, deleteCloudRegion, 
-  subscribeToCollection, deleteCloudUser, supabase, saveCloudClient, deleteCloudClient
+  subscribeToCollection, deleteCloudUser, saveCloudClient, deleteCloudClient, auth
 } from './supabase';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
@@ -80,7 +85,6 @@ export function useRouteLogState() {
 
   // Tracking reference for live subscriptions and active logs
   const gpsTickRef = useRef<NodeJS.Timeout | null>(null);
-  const unsubsRef = useRef<(() => void)[] | null>(null);
 
   // References for automated GPS coordinate Geofencing tracking
   const previousGeofenceState = useRef<{ [driverId: string]: { [regionId: string]: boolean } }>({});
@@ -114,41 +118,29 @@ export function useRouteLogState() {
     }
   }, [users, currentUser]);
 
-  // Supabase Auth and unified session handler
+  // Firebase Auth and unified session handler
   useEffect(() => {
-    if (!supabase) return;
+    if (!auth) return;
 
-    const syncAuthedSession = async (session: any) => {
-      if (!session?.user) return;
-      const authUser = session.user;
-      const email = authUser.email;
-      const authId = authUser.id; // Real secure Supabase Auth UUID
-      const fullName = authUser.user_metadata?.full_name || authUser.user_metadata?.name || email?.split('@')[0] || 'Usuário Autenticado';
+    const syncAuthedSession = async (firebaseUser: any) => {
+      if (!firebaseUser) return;
+      const email = firebaseUser.email;
+      const authId = firebaseUser.uid; // Real secure Firebase Auth UUID
+      const fullName = firebaseUser.displayName || email?.split('@')[0] || 'Usuário Autenticado';
 
       if (email) {
         let matchedUser: RouteUser | null = null;
-        try {
-          const { data, error } = await supabase.from('users').select('*').or(`id.eq.${authId},email.eq.${email}`);
-          if (!error && data && data.length > 0) {
-            matchedUser = data[0] as RouteUser;
-          }
-        } catch (err) {
-          console.error('[Supabase Auth Check Error]', err);
-        }
-
-        if (!matchedUser) {
-          matchedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase() || u.id === authId) || null;
-        }
+        matchedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase() || u.id === authId) || null;
 
         const isAdminEmail = email.toLowerCase() === 'linkalexanderlink@gmail.com' || email.toLowerCase().includes('admin');
 
         if (matchedUser) {
           if (matchedUser.status === 'banned' || matchedUser.status === 'suspended') {
-            console.warn('[Supabase Auth] User status is not active:', matchedUser.status);
+            console.warn('[Firebase Auth] User status is not active:', matchedUser.status);
             return;
           }
           if (isAdminEmail && matchedUser.role !== UserRole.ADMIN) {
-            console.log('[Supabase Auth] Upgrading user role to ADMIN:', email);
+            console.log('[Firebase Auth] Upgrading user role to ADMIN:', email);
             const oldId = matchedUser.id;
             const upgradedUser: AdminUser = {
               id: authId,
@@ -165,18 +157,18 @@ export function useRouteLogState() {
             setUsers(prev => prev.map(u => u.id === oldId ? upgradedUser : u));
           } else if (matchedUser.id !== authId) {
             const oldId = matchedUser.id;
-            console.log('[Supabase Auth] Migrating user ID from mock to secure auth UUID:', oldId, '->', authId);
+            console.log('[Firebase Auth] Migrating user ID from mock to secure auth UUID:', oldId, '->', authId);
             await deleteCloudUser(oldId);
             matchedUser = { ...matchedUser, id: authId };
             await saveCloudUser(matchedUser);
 
-            // Cascade ID updates to ensure assigned rotas are protected under new RLS settings
+            // Cascade ID updates to ensure assigned rotas are protected under new rules settings
             const affectedRotas = rotas.filter(r => r.driverId === oldId);
             for (const r of affectedRotas) {
               await saveCloudRoute({ ...r, driverId: authId });
             }
           }
-          console.log('[Supabase Auth] Matched existing operator profile:', matchedUser);
+          console.log('[Firebase Auth] Matched existing operator profile:', matchedUser);
           setCurrentUser(matchedUser);
         } else {
           // Create new user profile linked with real Auth ID
@@ -213,7 +205,7 @@ export function useRouteLogState() {
             } as MotoristaUser;
           }
 
-          console.log('[Supabase Auth] Creating new authenticated operator profile in database:', newUser);
+          console.log('[Firebase Auth] Creating new authenticated operator profile in database:', newUser);
           await saveCloudUser(newUser);
           setCurrentUser(newUser);
 
@@ -225,25 +217,18 @@ export function useRouteLogState() {
       }
     };
 
-    // Check session on mount
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        syncAuthedSession(session);
-      }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[Supabase Auth State Changed]:', event, session);
-      if ((event === 'SIGNED_IN' || event === 'USER_UPDATED') && session) {
-        await syncAuthedSession(session);
-      } else if (event === 'SIGNED_OUT') {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log('[Firebase Auth State Changed]:', firebaseUser);
+      if (firebaseUser) {
+        await syncAuthedSession(firebaseUser);
+      } else {
         setCurrentUser(null);
         setImpersonatingUser(null);
       }
     });
 
     return () => {
-      subscription.unsubscribe();
+      unsubscribe();
     };
   }, [users, rotas]);
 
@@ -325,124 +310,114 @@ export function useRouteLogState() {
     }
   }, [rotas]);
 
-  // Supabase Real-Time Subscriptions Setup (Eliminating polling completely)
+  // 1. Database Seeding on Mount
   useEffect(() => {
-    let unsubscribed = false;
+    seedDatabaseIfEmpty().catch(err => {
+      console.warn('[Firestore] Initial seeding failed or was skipped:', err);
+    });
+  }, []);
 
-    const initSupabaseSync = async () => {
-      // Seed if necessary first
-      await seedDatabaseIfEmpty();
-      if (unsubscribed) return;
+  // 2. Synchronous Real-Time Subscriptions Setup (Eliminating polling completely)
+  useEffect(() => {
+    // Subscribe to users with resilient error handling
+    const unsubUsers = subscribeToCollection<RouteUser>('users', (list) => {
+      setUsers(list);
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Users subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to users with resilient error handling
-      const unsubUsers = subscribeToCollection<RouteUser>('users', (list) => {
-        setUsers(list);
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Users subscription currently unavailable (working with offline/cache data):', err.message);
+    // Subscribe to routes with resilient error handling
+    const unsubRotas = subscribeToCollection<Rota>('rotas', (list) => {
+      setRotas(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Rotas subscription currently unavailable (working with offline/cache data):', err.message);
+    });
+
+    // Subscribe to driver current locations with resilient error handling
+    const unsubLocations = subscribeToCollection<GPSLocation>('locations', (list) => {
+      const map: { [driverId: string]: GPSLocation } = {};
+      list.forEach(loc => {
+        map[loc.driverId] = loc;
       });
+      setLocations(map);
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Locations subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to routes with resilient error handling
-      const unsubRotas = subscribeToCollection<Rota>('rotas', (list) => {
-        setRotas(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Rotas subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to active chats with resilient error handling
+    const unsubChats = subscribeToCollection<ChatMessage>('chats', (list) => {
+      setChats(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Chats subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to driver current locations with resilient error handling
-      const unsubLocations = subscribeToCollection<GPSLocation>('locations', (list) => {
-        const map: { [driverId: string]: GPSLocation } = {};
-        list.forEach(loc => {
-          map[loc.driverId] = loc;
-        });
-        setLocations(map);
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Locations subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to notifications with resilient error handling
+    const unsubNotifs = subscribeToCollection<NotificationLog>('notifications', (list) => {
+      setNotifications(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Notifications subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to active chats with resilient error handling
-      const unsubChats = subscribeToCollection<ChatMessage>('chats', (list) => {
-        setChats(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Chats subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to auditLogs with resilient error handling
+    const unsubAudits = subscribeToCollection<AuditLogEntry>('audit_logs', (list) => {
+      setAuditLogs(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] AuditLogs subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to notifications with resilient error handling
-      const unsubNotifs = subscribeToCollection<NotificationLog>('notifications', (list) => {
-        setNotifications(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Notifications subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to performanceLogs with resilient error handling
+    const unsubPerformance = subscribeToCollection<RoutePerformanceLog>('performance_logs', (list) => {
+      setPerformanceLogs(list.sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime()));
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] PerformanceLogs subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to auditLogs with resilient error handling
-      const unsubAudits = subscribeToCollection<AuditLogEntry>('audit_logs', (list) => {
-        setAuditLogs(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] AuditLogs subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to pushLogs with resilient error handling
+    const unsubPushLogs = subscribeToCollection<PushDeliveryLog>('push_logs', (list) => {
+      setPushLogs(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] PushLogs subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to performanceLogs with resilient error handling
-      const unsubPerformance = subscribeToCollection<RoutePerformanceLog>('performance_logs', (list) => {
-        setPerformanceLogs(list.sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime()));
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] PerformanceLogs subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to regions with resilient error handling
+    const unsubRegions = subscribeToCollection<Region>('regions', (list) => {
+      setRegions(list);
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Regions subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to pushLogs with resilient error handling
-      const unsubPushLogs = subscribeToCollection<PushDeliveryLog>('push_logs', (list) => {
-        setPushLogs(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] PushLogs subscription currently unavailable (working with offline/cache data):', err.message);
-      });
+    // Subscribe to clients with resilient error handling
+    const unsubClients = subscribeToCollection<Cliente>('clients', (list) => {
+      setClients(list);
+    }, (err) => {
+      console.warn('[Firestore Sync Offline] Clients subscription currently unavailable (working with offline/cache data):', err.message);
+    });
 
-      // Subscribe to regions with resilient error handling
-      const unsubRegions = subscribeToCollection<Region>('regions', (list) => {
-        if (list.length > 0) {
-          setRegions(list);
-        } else {
-          setRegions(INITIAL_REGIONS);
+    // Subscribe to breadcrumbs in real-time
+    const unsubBreadcrumbs = subscribeToCollection<{ driverId: string; trail: { lat: number; lng: number; timestamp: string }[] }>('breadcrumbs', (list) => {
+      const map: { [driverId: string]: { lat: number; lng: number }[] } = {};
+      list.forEach(b => {
+        if (b && b.driverId) {
+          map[b.driverId] = b.trail || [];
         }
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Regions subscription currently unavailable (working with offline/cache data):', err.message);
       });
-
-      // Subscribe to clients with resilient error handling
-      const unsubClients = subscribeToCollection<Cliente>('clients', (list) => {
-        if (list.length > 0) {
-          setClients(list);
-        } else {
-          setClients(INITIAL_CLIENTS);
-        }
-      }, (err) => {
-        console.warn('[Supabase Sync Offline] Clients subscription currently unavailable (working with offline/cache data):', err.message);
-      });
-
-      // Subscribe to breadcrumbs in real-time
-      const unsubBreadcrumbs = subscribeToCollection<{ driverId: string; trail: { lat: number; lng: number; timestamp: string }[] }>('breadcrumbs', (list) => {
-        const map: { [driverId: string]: { lat: number; lng: number }[] } = {};
-        list.forEach(b => {
-          if (b && b.driverId) {
-            map[b.driverId] = b.trail || [];
-          }
-        });
-        setBreadcrumbs(map);
-      }, (err) => {
-        console.warn('[Firestore Sync] Breadcrumbs subscription currently unavailable:', err.message);
-      });
-
-      unsubsRef.current = [
-        unsubUsers, unsubRotas, unsubLocations, unsubChats, 
-        unsubNotifs, unsubAudits, unsubPerformance, unsubPushLogs, unsubRegions, unsubClients,
-        unsubBreadcrumbs
-      ];
-    };
-
-    initSupabaseSync();
+      setBreadcrumbs(map);
+    }, (err) => {
+      console.warn('[Firestore Sync] Breadcrumbs subscription currently unavailable:', err.message);
+    });
 
     return () => {
-      unsubscribed = true;
-      if (unsubsRef.current) {
-        unsubsRef.current.forEach(fn => fn());
-      }
+      unsubUsers();
+      unsubRotas();
+      unsubLocations();
+      unsubChats();
+      unsubNotifs();
+      unsubAudits();
+      unsubPerformance();
+      unsubPushLogs();
+      unsubRegions();
+      unsubClients();
+      unsubBreadcrumbs();
     };
   }, []);
 
@@ -865,28 +840,16 @@ export function useRouteLogState() {
   const handleLogin = async (email: string, password?: string, role?: UserRole) => {
     console.log('[Auth Diagnostic] handleLogin triggered:', { email, password, role });
     
-    // If Supabase is active and password is provided, try real Supabase authentication first
-    if (supabase && password) {
+    // If Firebase Auth is active and password is provided, try real Firebase authentication first
+    if (auth && password && email.includes('@')) {
       try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password
-        });
-        if (error) {
-          return { success: false, error: `Erro Supabase Auth: ${error.message}` };
-        }
-        if (data.session?.user) {
-          const profileEmail = data.session.user.email;
-          const authId = data.session.user.id;
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const firebaseUser = userCredential.user;
+        if (firebaseUser) {
+          const profileEmail = firebaseUser.email;
+          const authId = firebaseUser.uid;
           if (profileEmail) {
             let matched = users.find(u => u.email.toLowerCase() === profileEmail.toLowerCase() || u.id === authId);
-            if (!matched) {
-              // Try directly to select from database users table
-              const { data: dbUsers, error: dbError } = await supabase.from('users').select('*').or(`id.eq.${authId},email.eq.${profileEmail}`);
-              if (!dbError && dbUsers && dbUsers.length > 0) {
-                matched = dbUsers[0] as RouteUser;
-              }
-            }
             if (matched) {
               if (matched.status === 'banned') {
                 return { success: false, error: 'Esta conta foi permanentemente banida da plataforma.' };
@@ -896,7 +859,7 @@ export function useRouteLogState() {
               }
               if (matched.id !== authId) {
                 const oldId = matched.id;
-                console.log('[Supabase Auth] Migrating user ID from mock to secure auth UUID on Login:', oldId, '->', authId);
+                console.log('[Firebase Auth] Migrating user ID on Login:', oldId, '->', authId);
                 await deleteCloudUser(oldId);
                 matched = { ...matched, id: authId };
                 await saveCloudUser(matched);
@@ -943,7 +906,7 @@ export function useRouteLogState() {
           }
         }
       } catch (err: any) {
-        return { success: false, error: `Falha no Supabase: ${err.message}` };
+        return { success: false, error: `Falha no Firebase: ${err.message}` };
       }
     }
 
@@ -986,22 +949,15 @@ export function useRouteLogState() {
 
   const handleRegister = async (userData: Partial<RouteUser> & { password?: string }) => {
     let finalId = `user_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
-    // If live Supabase connection is active and password is provided, trigger real credentials signUp
-    if (supabase && userData.password && userData.email) {
-      const { data, error } = await supabase.auth.signUp({
-        email: userData.email,
-        password: userData.password,
-        options: {
-          data: {
-            full_name: userData.name || userData.email.split('@')[0]
-          }
+    // If live Firebase Auth connection is active and password is provided, trigger real credentials signUp
+    if (auth && userData.password && userData.email) {
+      try {
+        const userCredential = await createUserWithEmailAndPassword(auth, userData.email, userData.password);
+        if (userCredential.user) {
+          finalId = userCredential.user.uid;
         }
-      });
-      if (error) {
-        throw new Error(`Erro de Registro no Supabase: ${error.message}`);
-      }
-      if (data.user) {
-        finalId = data.user.id;
+      } catch (err: any) {
+        throw new Error(`Erro de Registro no Firebase: ${err.message}`);
       }
     }
 
@@ -1032,11 +988,11 @@ export function useRouteLogState() {
   };
 
   const handleLogout = async () => {
-    if (supabase) {
+    if (auth) {
       try {
-        await supabase.auth.signOut();
+        await auth.signOut();
       } catch (err) {
-        console.error('Error signing out from Supabase:', err);
+        console.error('Error signing out from Firebase:', err);
       }
     }
     setCurrentUser(null);
@@ -1201,6 +1157,9 @@ export function useRouteLogState() {
     if (impersonatingUser && impersonatingUser.id === targetUserId) {
       setImpersonatingUser(null);
     }
+
+    // Immediate state update for responsive feedback
+    setUsers(prev => prev.filter(u => u.id !== targetUserId));
   };
 
   const handleSaveRegion = async (region: Region) => {
@@ -1238,28 +1197,52 @@ export function useRouteLogState() {
 
     await saveCloudRegion(region);
     await saveCloudAuditLog(newAudit);
+
+    setRegions(prev => {
+      const idx = prev.findIndex(r => r.id === region.id);
+      if (idx !== -1) {
+        const next = [...prev];
+        next[idx] = region;
+        return next;
+      } else {
+        return [...prev, region];
+      }
+    });
   };
 
   const handleDeleteRegion = async (regionId: string) => {
-    const isUserAdmin = currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin');
-    if (!isUserAdmin) return;
+    const activeSessionUser = impersonatingUser ? impersonatingUser : currentUser;
+    const isUserAdmin = (currentUser && (Number(currentUser.role) === UserRole.ADMIN || String(currentUser.role) === '0' || String(currentUser.role).toLowerCase() === 'admin')) ||
+                        (activeSessionUser && (Number(activeSessionUser.role) === UserRole.ADMIN || String(activeSessionUser.role) === '0' || String(activeSessionUser.role).toLowerCase() === 'admin'));
+    
+    if (!isUserAdmin) {
+      console.warn('[handleDeleteRegion] Unauthorized attempt to delete region:', regionId);
+      return;
+    }
 
     const reg = regions.find(r => r.id === regionId);
-    if (!reg) return;
+    const regName = reg ? reg.name : regionId;
 
     const newAudit: AuditLogEntry = {
       id: `audit_${Date.now()}_${Math.floor(Math.random() * 1000000)}`,
-      adminId: currentUser.id,
-      adminName: currentUser.name,
+      adminId: currentUser?.id || 'admin',
+      adminName: currentUser?.name || 'Administrador',
       action: 'Excluir Região',
       targetUserId: 'region_' + regionId,
-      targetUserName: reg.name,
-      details: `Região "${reg.name}" (${regionId}) foi excluída pelo Administrador.`,
+      targetUserName: regName,
+      details: `Região "${regName}" (${regionId}) foi excluída pelo Administrador.`,
       timestamp: new Date().toISOString()
     };
 
-    await deleteCloudRegion(regionId);
-    await saveCloudAuditLog(newAudit);
+    try {
+      await deleteCloudRegion(regionId);
+      await saveCloudAuditLog(newAudit);
+    } catch (err) {
+      console.error('[handleDeleteRegion] Firestore delete failed:', err);
+    }
+
+    // Immediate state update for responsive feedback
+    setRegions(prev => prev.filter(r => r.id !== regionId));
   };
 
   const handleSaveClient = async (client: Cliente) => {

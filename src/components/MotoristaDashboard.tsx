@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import InteractiveMap from './InteractiveMap';
 import RouteMap from './RouteMap';
+import { RouteTimeComparisonChart } from './RouteTimeComparisonChart';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -1791,6 +1792,8 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                     {myCompletedRoutes.length} Concluídas
                   </span>
                 </div>
+
+                <RouteTimeComparisonChart completedRoutes={myCompletedRoutes} performanceLogs={performanceLogs} />
 
                 {myCompletedRoutes.length > 0 ? (
                   (() => {

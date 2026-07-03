@@ -10,6 +10,16 @@ export function useRealtimeLogistics(
   const processedChatIds = useRef<Set<string>>(new Set());
   const processedLocationTimestamps = useRef<Map<string, string>>(new Map());
 
+  // Use refs to avoid recreating subscriptions on callback instance changes
+  const onNewMessageRef = useRef(onNewMessage);
+  const onNewLocationRef = useRef(onNewLocation);
+
+  // Always keep the refs updated with the latest callbacks
+  useEffect(() => {
+    onNewMessageRef.current = onNewMessage;
+    onNewLocationRef.current = onNewLocation;
+  });
+
   useEffect(() => {
     // Reset processed caches on region change
     processedChatIds.current.clear();
@@ -35,7 +45,7 @@ export function useRealtimeLogistics(
       filtered.forEach(chat => {
         if (chat && chat.id && !processedChatIds.current.has(chat.id)) {
           processedChatIds.current.add(chat.id);
-          onNewMessage(chat);
+          onNewMessageRef.current(chat);
         }
       });
     });
@@ -49,7 +59,7 @@ export function useRealtimeLogistics(
           const lastTime = processedLocationTimestamps.current.get(loc.driverId);
           if (loc.lastUpdated !== lastTime) {
             processedLocationTimestamps.current.set(loc.driverId, loc.lastUpdated || '');
-            onNewLocation(loc);
+            onNewLocationRef.current(loc);
           }
         }
       });
@@ -59,5 +69,5 @@ export function useRealtimeLogistics(
       unsubscribeChat();
       unsubscribeLocations();
     };
-  }, [regionActive, onNewMessage, onNewLocation]);
+  }, [regionActive]); // Only re-subscribe if regionActive changes
 }

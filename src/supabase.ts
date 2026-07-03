@@ -18,9 +18,12 @@ import {
 } from './mockData';
 import firebaseConfig from '../firebase-applet-config.json';
 
+import { getAuth } from 'firebase/auth';
+
 // Initialize Firebase Core and Firestore Named Database
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const auth = getAuth(app);
 
 // Export null supabase to avoid compiler errors on legacy checks
 export const supabase = null;
@@ -50,9 +53,9 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: null,
-      email: null,
-      emailVerified: null
+      userId: auth?.currentUser?.uid || null,
+      email: auth?.currentUser?.email || null,
+      emailVerified: auth?.currentUser?.emailVerified || null
     },
     operationType,
     path
@@ -81,42 +84,32 @@ testConnection();
 // -------------------------------------------------------------
 export async function seedDatabaseIfEmpty() {
   try {
-    const usersSnap = await getDocs(collection(db, 'users'));
-    if (usersSnap.empty) {
-      console.log('[Firestore Seeding] Database is empty. Seeding baseline data...');
-      
-      for (const user of INITIAL_USERS) {
-        await setDoc(doc(db, 'users', user.id), user);
+    const collectionsToSeed = [
+      { name: 'users', data: INITIAL_USERS, idKey: 'id' },
+      { name: 'regions', data: INITIAL_REGIONS, idKey: 'id' },
+      { name: 'rotas', data: INITIAL_ROTAS, idKey: 'id' },
+      { name: 'locations', data: Object.values(INITIAL_LOCATIONS), idKey: 'driverId' },
+      { name: 'chats', data: INITIAL_CHAT, idKey: 'id' },
+      { name: 'notifications', data: INITIAL_NOTIFICATIONS, idKey: 'id' },
+      { name: 'audit_logs', data: INITIAL_AUDIT_LOGS, idKey: 'id' },
+      { name: 'performance_logs', data: INITIAL_PERFORMANCE_LOGS, idKey: 'id' },
+      { name: 'push_logs', data: INITIAL_PUSH_LOGS, idKey: 'id' },
+      { name: 'clients', data: INITIAL_CLIENTS, idKey: 'id' }
+    ];
+
+    for (const coll of collectionsToSeed) {
+      const snap = await getDocs(collection(db, coll.name));
+      if (snap.empty) {
+        console.log(`[Firestore Seeding] Collection '${coll.name}' is empty. Seeding baseline data...`);
+        for (const item of coll.data) {
+          const docId = (item as any)[coll.idKey];
+          if (docId) {
+            await setDoc(doc(db, coll.name, docId), item);
+          }
+        }
       }
-      for (const reg of INITIAL_REGIONS) {
-        await setDoc(doc(db, 'regions', reg.id), reg);
-      }
-      for (const rota of INITIAL_ROTAS) {
-        await setDoc(doc(db, 'rotas', rota.id), rota);
-      }
-      for (const loc of Object.values(INITIAL_LOCATIONS)) {
-        await setDoc(doc(db, 'locations', loc.driverId), loc);
-      }
-      for (const chat of INITIAL_CHAT) {
-        await setDoc(doc(db, 'chats', chat.id), chat);
-      }
-      for (const notif of INITIAL_NOTIFICATIONS) {
-        await setDoc(doc(db, 'notifications', notif.id), notif);
-      }
-      for (const audit of INITIAL_AUDIT_LOGS) {
-        await setDoc(doc(db, 'audit_logs', audit.id), audit);
-      }
-      for (const perf of INITIAL_PERFORMANCE_LOGS) {
-        await setDoc(doc(db, 'performance_logs', perf.id), perf);
-      }
-      for (const push of INITIAL_PUSH_LOGS) {
-        await setDoc(doc(db, 'push_logs', push.id), push);
-      }
-      for (const client of INITIAL_CLIENTS) {
-        await setDoc(doc(db, 'clients', client.id), client);
-      }
-      console.log('[Firestore Seeding] Seeding completed successfully!');
     }
+    console.log('[Firestore Seeding] Seeding check and verification completed successfully!');
   } catch (err) {
     console.warn('[Firestore Seeding Error]', err);
   }

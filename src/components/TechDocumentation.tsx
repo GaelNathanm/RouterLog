@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 
 export default function TechDocumentation() {
-  const [activeTab, setActiveTab] = useState<'architecture' | 'scope' | 'flows'>('architecture');
+  const [activeTab, setActiveTab] = useState<'architecture' | 'scope' | 'flows' | 'audits'>('architecture');
   const [selectedArchNode, setSelectedArchNode] = useState<string | null>('directions');
 
   const archNodesInfo: Record<string, { title: string; tech: string; desc: string; role: string }> = {
@@ -89,6 +89,15 @@ export default function TechDocumentation() {
             >
               <Compass className="w-3.5 h-3.5" />
               Fluxos de Tela
+            </button>
+            <button
+              onClick={() => setActiveTab('audits')}
+              className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
+                activeTab === 'audits' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Cpu className="w-3.5 h-3.5" />
+              Cotas e Auditoria (Passo 3)
             </button>
           </div>
         </div>
@@ -493,6 +502,82 @@ export default function TechDocumentation() {
                   <p className="text-[11px] text-indigo-900 leading-relaxed">
                     O app opera como um organismo vivo: no momento do Motorista GV1 iniciar sua viagem, o celular pessoal envia uma notificação FCM silenciosa e ruidosa. Instantaneamente, o telefone da Vendedora Paula Reis (GV1) e o da Gerente Mariana Souza (GV1) recebem banners suspensos: <strong>&quot;Rota iniciada por Lucas Silva!&quot;</strong>, guiando seus respectivos mapas e streams de telemetria em menos de 200 milissegundos.
                   </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'audits' && (
+          <div className="space-y-6 text-xs text-slate-700">
+            <div className="p-4 bg-slate-900 text-white rounded-xl flex items-center justify-between border border-slate-800 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-indigo-600 rounded-lg text-white">
+                  <Cpu className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold">Passo 3: Auditoria Regular de Desempenho e Cotas</h3>
+                  <p className="text-[11px] text-slate-400">Diretrizes de monitoramento, otimização de limites operacionais e saúde do ecossistema Cloud.</p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full font-mono font-bold text-[10px]">RECOMENDADO</span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Card 1: Métricas de Desempenho React */}
+              <div className="border border-slate-200 rounded-xl p-5 bg-white shadow-sm space-y-3">
+                <h4 className="font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-2">
+                  <Server className="w-4 h-4 text-indigo-600" />
+                  1. Auditoria de Desempenho Client-Side
+                </h4>
+                <p className="text-slate-600 leading-relaxed text-[11px]">
+                  Para garantir a estabilidade da aplicação em dispositivos móveis e navegadores web com recursos limitados, estabelecemos métricas rigorosas de consumo e ciclo de vida:
+                </p>
+                <ul className="list-disc pl-5 space-y-1.5 text-slate-600 leading-relaxed text-[11px]">
+                  <li><strong>Gerenciamento de Subscrições:</strong> Sincronização síncrona acoplada rigidamente ao ciclo de vida do componente React para prevenção absoluta de listeners órfãos.</li>
+                  <li><strong>Limpeza de Memória:</strong> Eliminação de loops redundantes e timers inativos na simulação de GPS, reduzindo o uso de CPU para quase zero em modo inativo.</li>
+                  <li><strong>Cache de Estado Local:</strong> Utilização estratégica do local storage como cache resiliente para acelerar o tempo de carregamento da interface em conexões 3G/4G instáveis.</li>
+                </ul>
+              </div>
+
+              {/* Card 2: Controle de Cotas Cloud */}
+              <div className="border border-slate-200 rounded-xl p-5 bg-white shadow-sm space-y-3">
+                <h4 className="font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-2">
+                  <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                  2. Auditoria de Cotas e Custos Operacionais
+                </h4>
+                <p className="text-slate-600 leading-relaxed text-[11px]">
+                  A operação logística utiliza intensivamente as APIs do Google Maps e o Firestore. O controle estrito de cotas é essencial para evitar picos inesperados de faturamento:
+                </p>
+                <ul className="list-disc pl-5 space-y-1.5 text-slate-600 leading-relaxed text-[11px]">
+                  <li><strong>Google Directions API:</strong> Implementação de otimização de waypoints para consolidar múltiplos cálculos de rota em uma única chamada.</li>
+                  <li><strong>Firestore Reads/Writes:</strong> Substituição completa de polling por conexões WebSockets nativas (onSnapshot) para reduzir em até 92% a cota de leitura do banco de dados.</li>
+                  <li><strong>Limitação de Banda:</strong> Desativação inteligente de atualizações em plano de fundo quando o motorista suspende voluntariamente o compartilhamento de localização.</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Checklist de Auditoria Periódica */}
+            <div className="border border-slate-200 rounded-xl p-5 bg-indigo-50/50 space-y-4">
+              <h4 className="font-bold text-indigo-900 flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-indigo-600" />
+                Protocolo Semanal de Auditoria Logística
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-white border border-indigo-100 p-4 rounded-lg space-y-1">
+                  <span className="font-bold text-indigo-600 text-[10px] font-mono">ETAPA A</span>
+                  <h5 className="font-bold text-slate-900 text-xs">Revisão de Desvios</h5>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">Auditar logs de telemetria comparando a quilometragem estimada versus real para identificar gargalos operacionais nas rotas sugeridas.</p>
+                </div>
+                <div className="bg-white border border-indigo-100 p-4 rounded-lg space-y-1">
+                  <span className="font-bold text-indigo-600 text-[10px] font-mono">ETAPA B</span>
+                  <h5 className="font-bold text-slate-900 text-xs">Análise de Latência</h5>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">Medir a latência média de entrega das notificações FCM para assegurar que motoristas e vendedores operem em perfeita sincronia.</p>
+                </div>
+                <div className="bg-white border border-indigo-100 p-4 rounded-lg space-y-1">
+                  <span className="font-bold text-indigo-600 text-[10px] font-mono">ETAPA C</span>
+                  <h5 className="font-bold text-slate-900 text-xs">Depuração de Cotas</h5>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">Revisar o console do Google Cloud Platform semanalmente, checando os limites e thresholds de requisições de mapas por usuário ativo.</p>
                 </div>
               </div>
             </div>

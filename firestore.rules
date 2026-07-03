@@ -1,9 +1,133 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Permite leitura e escrita gerais para fins operacionais compartilhados entre condutores, admin e gerentes
-    match /{document=**} {
-      allow read, write: if true;
+    
+    // Helper validation functions
+    function isString(val) {
+      return val is string;
+    }
+    function isNumber(val) {
+      return val is number;
+    }
+    function isBool(val) {
+      return val is bool;
+    }
+    function isList(val) {
+      return val is list;
+    }
+    function isValidEmail(val) {
+      return isString(val) && val.size() > 3 && val.matches('.+@.+');
+    }
+    function isValidLat(val) {
+      return isNumber(val) && val >= -90.0 && val <= 90.0;
+    }
+    function isValidLng(val) {
+      return isNumber(val) && val >= -180.0 && val <= 180.0;
+    }
+
+    // 1. USERS COLLECTION
+    // Only allow operations that preserve the ID and validate critical fields
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == userId
+                   && isString(request.resource.data.name) && request.resource.data.name.size() > 0
+                   && isValidEmail(request.resource.data.email)
+                   && isNumber(request.resource.data.role) 
+                   && (request.resource.data.role >= 0 && request.resource.data.role <= 3)
+                   && isString(request.resource.data.status)
+                   && (request.resource.data.status == 'active' || request.resource.data.status == 'suspended' || request.resource.data.status == 'banned');
+      allow delete: if true; // Allowed so Admin can manage database users
+    }
+
+    // 2. REGIONS COLLECTION
+    match /regions/{regionId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == regionId
+                   && isString(request.resource.data.name) && request.resource.data.name.size() > 0;
+      allow delete: if true;
+    }
+
+    // 3. ROTAS COLLECTION
+    match /rotas/{rotaId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == rotaId
+                   && isString(request.resource.data.driverId)
+                   && isString(request.resource.data.name)
+                   && isList(request.resource.data.stops);
+      allow delete: if true;
+    }
+
+    // 4. LOCATIONS COLLECTION (Live Drivers GPS)
+    match /locations/{driverId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.driverId == driverId
+                   && isValidLat(request.resource.data.lat)
+                   && isValidLng(request.resource.data.lng);
+      allow delete: if true;
+    }
+
+    // 5. CHATS COLLECTION
+    match /chats/{chatId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == chatId
+                   && isString(request.resource.data.senderId)
+                   && isString(request.resource.data.message) && request.resource.data.message.size() > 0;
+      allow delete: if true;
+    }
+
+    // 6. NOTIFICATIONS COLLECTION
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == notificationId
+                   && isString(request.resource.data.title)
+                   && isString(request.resource.data.body);
+      allow delete: if true;
+    }
+
+    // 7. AUDIT LOGS COLLECTION
+    // Audit logs are read-only and create-only. Absolute zero deletion or modification allowed.
+    match /audit_logs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data.id == logId
+                   && isString(request.resource.data.adminId)
+                   && isString(request.resource.data.action);
+      allow update, delete: if false;
+    }
+
+    // 8. PERFORMANCE LOGS COLLECTION
+    // Historical performance tracking. Non-deletable for legal/regulatory audit compliance.
+    match /performance_logs/{perfId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == perfId
+                   && isString(request.resource.data.routeId);
+      allow delete: if false;
+    }
+
+    // 9. PUSH LOGS COLLECTION
+    // System dispatch history. Immutable trails.
+    match /push_logs/{pushId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == pushId
+                   && isString(request.resource.data.title)
+                   && isString(request.resource.data.body);
+      allow delete: if false;
+    }
+
+    // 10. CLIENTS COLLECTION
+    match /clients/{clientId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.id == clientId
+                   && isString(request.resource.data.name) && request.resource.data.name.size() > 0
+                   && isString(request.resource.data.address) && request.resource.data.address.size() > 0;
+      allow delete: if true;
+    }
+
+    // 11. BREADCRUMBS COLLECTION
+    match /breadcrumbs/{driverId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.driverId == driverId
+                   && isList(request.resource.data.trail);
+      allow delete: if true;
     }
   }
 }

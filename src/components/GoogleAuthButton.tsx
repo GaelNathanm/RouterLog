@@ -4,7 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { supabase } from '../supabase';
+import { auth } from '../supabase';
+import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { showToast } from '../utils/toast';
 
 interface GoogleAuthButtonProps {
@@ -19,35 +20,40 @@ export default function GoogleAuthButton({ onAuthError, isLoading, setIsLoading 
   const setLoad = setIsLoading ?? setLocalLoading;
 
   const handleGoogleLogin = async () => {
-    if (!supabase) {
-      const msg = 'Configuração do Supabase (VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY) não encontrada no ambiente (.env).';
+    if (!auth) {
+      const msg = 'Configuração do Firebase Authentication não encontrada ou não inicializada.';
       if (onAuthError) {
         onAuthError(msg);
       } else {
-        showToast(msg, 'error', 'Supabase');
+        showToast(msg, 'error', 'Firebase Auth');
       }
       return;
     }
 
     try {
       setLoad(true);
-      const redirectToUrl = `${window.location.origin}/`;
-      console.log('[Google Auth] Redirecting with option URL:', redirectToUrl);
-      
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: redirectToUrl,
-        },
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({
+        prompt: 'select_account'
       });
-
-      if (error) {
-        throw error;
-      }
+      
+      console.log('[Firebase Auth] Launching Google Sign-In popup...');
+      const result = await signInWithPopup(auth, provider);
+      console.log('[Firebase Auth] Google Sign-In success for email:', result.user.email);
+      showToast('Autenticação Google realizada com sucesso!', 'success', 'Google Auth');
     } catch (err: any) {
       console.error('[Google Auth Error]:', err);
+      let userFriendlyMsg = err.message || 'Erro ao iniciar o fluxo de login via Google.';
+      if (err.code === 'auth/popup-blocked') {
+        userFriendlyMsg = 'O pop-up de login foi bloqueado pelo seu navegador. Por favor, permita pop-ups ou abra o app em uma nova aba.';
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        userFriendlyMsg = 'O fluxo de autenticação foi cancelado pelo usuário.';
+      }
+      
       if (onAuthError) {
-        onAuthError(err.message || 'Erro ao iniciar o fluxo de login via Google.');
+        onAuthError(userFriendlyMsg);
+      } else {
+        showToast(userFriendlyMsg, 'error', 'Google Auth');
       }
     } finally {
       setLoad(false);
