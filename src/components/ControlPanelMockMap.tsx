@@ -32,6 +32,21 @@ export default function ControlPanelMockMap({
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
+  const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+    const R = 6371e3; // metres
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+    const deltaLambda = ((lng2 - lng1) * Math.PI) / 180;
+
+    const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+              Math.cos(phi1) * Math.cos(phi2) *
+              Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // in meters
+  };
+
   // Extrapolate list of drivers and enrich with user metadata
   const driversWithTelemetry = useMemo(() => {
     return Object.keys(locations).map(driverId => {
@@ -56,6 +71,7 @@ export default function ControlPanelMockMap({
         phone: matchUser?.phone || '',
         activeRouteName: activeRoute?.name || null,
         activeRouteStopsCount: activeRoute?.stops.length || 0,
+        activeRoute: activeRoute || null,
       };
     });
   }, [locations, users, rotas]);
@@ -369,6 +385,49 @@ export default function ControlPanelMockMap({
                   const coords = projectCoordinates(d.lat, d.lng);
                   const angle = d.heading || 0;
 
+                  const activeRoute = d.activeRoute;
+                  const stops = activeRoute?.stops || [];
+                  const currentStopIdx = activeRoute?.currentStopIndex ?? 0;
+                  const currentStop = stops[currentStopIdx];
+
+                  let currentStatusText = "Sem Rota Ativa";
+                  let etaText = "N/A";
+                  let nextStopText = "Nenhum";
+                  let distanceText = "N/A";
+
+                  if (activeRoute) {
+                    if (d.speed > 0) {
+                      currentStatusText = "Em Deslocamento";
+                    } else {
+                      currentStatusText = "Parado / Em Operação";
+                    }
+
+                    if (currentStop) {
+                      nextStopText = currentStop.clientName;
+                      const distMeters = getDistanceInMeters(d.lat, d.lng, currentStop.lat, currentStop.lng);
+                      
+                      if (distMeters < 1000) {
+                        distanceText = `${Math.round(distMeters)} metros`;
+                      } else {
+                        distanceText = `${(distMeters / 1000).toFixed(1)} km`;
+                      }
+
+                      // Estimate minutes
+                      const speedKmh = d.speed > 0 ? d.speed : 30; // fallback to 30km/h if static
+                      const speedMps = (speedKmh * 1000) / 3600;
+                      const timeSeconds = distMeters / speedMps;
+                      const timeMinutes = Math.max(1, Math.ceil(timeSeconds / 60));
+
+                      const etaDate = new Date();
+                      etaDate.setMinutes(etaDate.getMinutes() + timeMinutes);
+                      
+                      const formattedTime = etaDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                      etaText = `${formattedTime} (em ~${timeMinutes} min)`;
+                    }
+                  } else {
+                    currentStatusText = d.speed > 0 ? "Em Trânsito" : "Disponível (Pátio)";
+                  }
+
                   return (
                     <div
                       id={`marker-${d.driverId}`}
@@ -414,27 +473,86 @@ export default function ControlPanelMockMap({
                       </div>
 
                       {/* Floating tooltip block above pin */}
-                      <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 border border-slate-800 text-slate-100 rounded-lg p-2 shadow-2xl transition-all duration-200 whitespace-nowrap select-none pointer-events-none ${
-                        isSelected || isHovered ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 translate-y-1"
+                      <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3.5 bg-slate-950/95 border border-slate-850/90 text-slate-100 rounded-xl p-3 shadow-2xl transition-all duration-300 w-72 whitespace-normal select-none pointer-events-none backdrop-blur-sm ${
+                        isSelected || isHovered ? "opacity-100 scale-100 translate-y-0 visible" : "opacity-0 scale-95 translate-y-2 invisible"
                       }`}>
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
-                          <span className="text-[10px] font-extrabold text-white block truncate">
-                            {d.name}
-                          </span>
-                          <span className="text-[9px] px-1 bg-slate-800 text-slate-400 rounded">
+                        {/* Tooltip Arrow */}
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-slate-950 border-r border-b border-slate-850/90 rotate-45"></div>
+
+                        {/* Header: Driver Info & Region */}
+                        <div className="flex items-start justify-between border-b border-slate-800/60 pb-2 mb-2">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[11px] font-extrabold text-white block truncate tracking-tight">
+                              {d.name}
+                            </span>
+                            <span className="text-[9px] text-slate-400 block font-mono">
+                              {d.vehicleModel} • {d.plate}
+                            </span>
+                          </div>
+                          <span className="p-0.5 px-1.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[8px] rounded font-mono font-bold uppercase tracking-wide">
                             {d.region}
                           </span>
                         </div>
-                        
-                        <div className="text-[9px] text-slate-400 leading-tight mt-0.5 font-mono">
-                          <div>Lat: {d.lat.toFixed(5)} / Lng: {d.lng.toFixed(5)}</div>
-                          <div>Velocidade: <span className="text-emerald-400 font-bold">{d.speed} km/h</span></div>
-                          {d.activeRouteName && (
-                            <div className="text-indigo-400 uppercase text-[8px] font-black mt-0.5">
-                              {d.activeRouteName} ({d.activeRouteStopsCount} paradas)
+
+                        {/* Interactive Data Block */}
+                        <div className="space-y-1.5 text-[10px]">
+                          {/* Current Status Row */}
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">Status Atual:</span>
+                            <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] font-mono flex items-center gap-1 uppercase ${
+                              activeRoute 
+                                ? d.speed > 0 
+                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                : "bg-slate-800 text-slate-400 border border-slate-700/50"
+                            }`}>
+                              <span className={`w-1 h-1 rounded-full ${
+                                activeRoute ? d.speed > 0 ? "bg-emerald-400 animate-pulse" : "bg-amber-400" : "bg-slate-400"
+                              }`}></span>
+                              {currentStatusText}
+                            </span>
+                          </div>
+
+                          {/* Active Route Row */}
+                          {activeRoute && (
+                            <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5">
+                              <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">Rota Ativa:</span>
+                              <span className="text-indigo-400 font-bold font-mono truncate max-w-[160px]">
+                                {activeRoute.name}
+                              </span>
                             </div>
                           )}
+
+                          {/* Next Stop Row */}
+                          {activeRoute && currentStop && (
+                            <>
+                              <div className="flex items-start justify-between border-t border-slate-850/50 pt-1.5 gap-2">
+                                <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider shrink-0 mt-0.5">Destino Atual:</span>
+                                <div className="text-right min-w-0 flex-1">
+                                  <span className="text-slate-200 font-bold block truncate">
+                                    {nextStopText}
+                                  </span>
+                                  <span className="text-slate-400 font-mono text-[9px] block">
+                                    Distância: <span className="text-slate-300 font-semibold">{distanceText}</span>
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Estimated Arrival Time (ETA) */}
+                              <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5">
+                                <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">ETA Estimado:</span>
+                                <span className="text-cyan-400 font-bold font-mono">
+                                  {etaText}
+                                </span>
+                              </div>
+                            </>
+                          )}
+
+                          {/* Live Speed and Heading */}
+                          <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5 font-mono text-[9px] text-slate-500">
+                            <span>Velocidade: <span className="text-emerald-400 font-bold">{d.speed} KM/H</span></span>
+                            <span>Projeção: <span className="text-slate-300">{d.heading}°</span></span>
+                          </div>
                         </div>
                       </div>
                     </div>

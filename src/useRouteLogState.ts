@@ -1044,6 +1044,9 @@ export function useRouteLogState() {
 
     await saveCloudUser(updatedUser);
     await saveCloudAuditLog(newAudit);
+
+    // Immediate state update for responsive feedback
+    setUsers(prev => prev.map(usr => usr.id === u.id ? updatedUser : usr));
   };
 
   const handleUpdateUser = async (updatedUser: RouteUser) => {
@@ -1063,6 +1066,9 @@ export function useRouteLogState() {
 
     await saveCloudUser(updatedUser);
     await saveCloudAuditLog(newAudit);
+
+    // Immediate state update for responsive feedback
+    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
   };
 
   const handleSelfProfileUpdate = async (updatedUser: RouteUser) => {
@@ -1130,6 +1136,13 @@ export function useRouteLogState() {
 
     await saveCloudUser(newUser);
     await saveCloudAuditLog(newAudit);
+
+    // Immediate state update for responsive feedback
+    setUsers(prev => {
+      if (prev.some(u => u.id === newUser.id)) return prev;
+      return [...prev, newUser];
+    });
+
     return newUser;
   };
 
@@ -1272,6 +1285,18 @@ export function useRouteLogState() {
       timestamp: new Date().toISOString()
     };
     await saveCloudAuditLog(newAudit);
+
+    // Immediate state update for responsive feedback
+    setClients(prev => {
+      const idx = prev.findIndex(c => c.id === finalClient.id);
+      if (idx !== -1) {
+        const next = [...prev];
+        next[idx] = finalClient;
+        return next;
+      } else {
+        return [...prev, finalClient];
+      }
+    });
   };
 
   const handleDeleteClient = async (clientId: string) => {
@@ -1291,6 +1316,9 @@ export function useRouteLogState() {
       timestamp: new Date().toISOString()
     };
     await saveCloudAuditLog(newAudit);
+
+    // Immediate state update for responsive feedback
+    setClients(prev => prev.filter(c => c.id !== clientId));
   };
 
   const dispatchCustomPush = async (title: string, body: string, selectedRegion: string) => {
@@ -1329,18 +1357,32 @@ export function useRouteLogState() {
     };
 
     saveCloudRoute(newRoute);
+
+    // Immediate state update for responsive feedback
+    setRotas(prev => {
+      if (prev.some(r => r.id === newRoute.id)) return prev;
+      return [newRoute, ...prev];
+    });
+
     return newRoute;
   };
 
   const handleUpdateRoute = async (id: string, updatedFields: Partial<Rota>) => {
     const matched = rotas.find(r => r.id === id);
     if (matched) {
-      await saveCloudRoute({ ...matched, ...updatedFields });
+      const updatedRoute = { ...matched, ...updatedFields };
+      await saveCloudRoute(updatedRoute);
+
+      // Immediate state update for responsive feedback
+      setRotas(prev => prev.map(r => r.id === id ? updatedRoute : r));
     }
   };
 
   const handleDeleteRoute = async (id: string) => {
     await deleteCloudRoute(id);
+
+    // Immediate state update for responsive feedback
+    setRotas(prev => prev.filter(r => r.id !== id));
   };
 
   const handleOptimizeRoute = async (stopsList: Parada[], originLat: number, originLng: number): Promise<Parada[]> => {
