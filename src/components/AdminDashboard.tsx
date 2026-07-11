@@ -10,7 +10,7 @@ import {
 import ClientImporter from './ClientImporter';
 import ClienteManager from './ClienteManager';
 import { 
-  Users, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
+  Users, User, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
   Trash2, AlertCircle, Share2, Navigation, CheckCircle, Send, MessageSquare, 
   UserCheck, ShieldAlert, Ban, Info, Sparkles, Plus, Map, Play, Check, Phone, ArrowRight, Edit, Pencil,
   Route, Compass, Bell, Settings, Layers, Calendar, BarChart3, Clock, AlertOctagon, HelpCircle, Truck, Signal,
@@ -1120,9 +1120,22 @@ export function AdminDashboard({
                     </div>
                   ) : (
                     <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div className="space-y-1 text-xs text-left">
-                        <div className="flex items-center gap-2">
-                          <strong className="text-sm font-bold text-slate-800">{user.name}</strong>
+                      <div className="flex items-start gap-3">
+                        {user.photoUrl ? (
+                          <img 
+                            src={user.photoUrl} 
+                            alt={user.name}
+                            referrerPolicy="no-referrer"
+                            className="w-10 h-10 rounded-full object-cover border border-slate-200 mt-0.5 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mt-0.5 shrink-0 border border-slate-200">
+                            <User className="w-5 h-5" />
+                          </div>
+                        )}
+                        <div className="space-y-1 text-xs text-left">
+                          <div className="flex items-center gap-2">
+                            <strong className="text-sm font-bold text-slate-800">{user.name}</strong>
                           <span className="text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded font-mono font-bold text-slate-600 uppercase">
                             REG: {(user as any).region || 'GLOBAL'}
                           </span>
@@ -1146,8 +1159,9 @@ export function AdminDashboard({
                           </div>
                         )}
                       </div>
+                    </div>
 
-                      <div className="flex items-center gap-2 self-start md:self-auto">
+                    <div className="flex items-center gap-2 self-start md:self-auto">
                         {/* Impersonator selector */}
                         {user.role !== UserRole.ADMIN && (
                           <button

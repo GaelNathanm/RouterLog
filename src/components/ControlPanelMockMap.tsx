@@ -308,6 +308,15 @@ const TelemetryMap = React.memo(function TelemetryMap({
       { lat: -19.932, lng: -43.942 }  // CD Belo Horizonte
     ];
 
+    // Also include active route stop locations to dynamically scale map bounds
+    filteredDrivers.forEach(d => {
+      if (d.activeRoute?.stops) {
+        d.activeRoute.stops.forEach((s: any) => {
+          boundsPoints.push({ lat: s.lat, lng: s.lng });
+        });
+      }
+    });
+
     let minLat = Math.min(...boundsPoints.map(p => p.lat));
     let maxLat = Math.max(...boundsPoints.map(p => p.lat));
     let minLng = Math.min(...boundsPoints.map(p => p.lng));
@@ -370,6 +379,55 @@ const TelemetryMap = React.memo(function TelemetryMap({
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] h-[440px] border border-dashed border-slate-800/60 rounded-full"></div>
         </div>
 
+        {/* SVG Pathway overlay to draw route sequence connections */}
+        <svg className="absolute inset-0 w-full h-full pointer-events-none z-1 select-none">
+          {filteredDrivers.map(d => {
+            const activeRoute = d.activeRoute;
+            if (!activeRoute || activeRoute.stops.length === 0) return null;
+            
+            const isSelectedDriver = selectedDriverId === d.driverId;
+            const isHoveredDriver = hoveredDriverId === d.driverId;
+            
+            // Build points sequence starting at Origin/CD, then mapping every Stop in order
+            const points: { x: string; y: string }[] = [];
+            points.push(projectCoordinates(activeRoute.originLat, activeRoute.originLng));
+            
+            activeRoute.stops.forEach((s: any) => {
+              points.push(projectCoordinates(s.lat, s.lng));
+            });
+
+            // Select visual style depending on focus state
+            const strokeColor = isSelectedDriver 
+              ? "stroke-indigo-400" 
+              : isHoveredDriver 
+              ? "stroke-indigo-500/70" 
+              : "stroke-slate-800/40";
+              
+            const strokeWidth = isSelectedDriver ? "2" : "1";
+            const strokeDashArray = isSelectedDriver ? "4,4" : "2,6";
+            
+            return (
+              <g key={`route-path-${d.driverId}`} className="transition-all duration-300">
+                {points.slice(0, -1).map((p, i) => {
+                  const nextP = points[i + 1];
+                  return (
+                    <line
+                      key={`segment-${d.driverId}-${i}`}
+                      x1={p.x}
+                      y1={p.y}
+                      x2={nextP.x}
+                      y2={nextP.y}
+                      className={`${strokeColor} transition-all duration-300`}
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={strokeDashArray}
+                    />
+                  );
+                })}
+              </g>
+            );
+          })}
+        </svg>
+
         {/* Plot: Distribution Centers (CD Reference points) */}
         {/* CD 1: Governador Valadares */}
         {(selectedRegionFilter === 'all' || selectedRegionFilter === 'GV1') && (
@@ -412,6 +470,101 @@ const TelemetryMap = React.memo(function TelemetryMap({
             </div>
           </div>
         )}
+
+        {/* Render Route Stops (Destinations) with Status Custom Colors */}
+        {filteredDrivers.flatMap(d => {
+          const activeRoute = d.activeRoute;
+          if (!activeRoute || activeRoute.stops.length === 0) return [];
+          
+          return activeRoute.stops.map((stop: any, idx: number) => {
+            const isSelectedDriver = selectedDriverId === d.driverId;
+            const isCompleted = stop.status === 'completed';
+            const isCurrent = idx === activeRoute.currentStopIndex || stop.status === 'Chegando';
+            const isPending = !isCompleted && !isCurrent;
+            
+            // Customize status-based markers (green for completed, yellow for in-progress, red for pending)
+            let markerColorClass = "bg-rose-500 border-rose-400 text-rose-100";
+            let statusLabel = "Pendente";
+            let tooltipStatusClass = "text-rose-450 bg-rose-500/10 border-rose-500/20";
+            
+            if (isCompleted) {
+              markerColorClass = "bg-emerald-500 border-emerald-400 text-emerald-100";
+              statusLabel = "Concluído";
+              tooltipStatusClass = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+            } else if (isCurrent) {
+              markerColorClass = "bg-amber-400 border-amber-300 text-slate-950 font-black";
+              statusLabel = "Em Deslocamento";
+              tooltipStatusClass = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+            }
+            
+            const coords = projectCoordinates(stop.lat, stop.lng);
+            const stopId = `stop-marker-${activeRoute.id}-${stop.id}-${idx}`;
+            
+            // Apply visual opacity depending on driver filter selections to remove map clutter
+            const focusOpacityClass = selectedDriverId 
+              ? isSelectedDriver 
+                ? "opacity-100 z-20 scale-110" 
+                : "opacity-25 z-5 scale-90"
+              : "opacity-90 z-10 hover:opacity-100 hover:scale-115";
+              
+            return (
+              <div
+                id={stopId}
+                key={stopId}
+                style={{
+                  left: coords.x,
+                  top: coords.y,
+                }}
+                className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all duration-300 group/stop ${focusOpacityClass}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedDriverId(d.driverId);
+                }}
+              >
+                {/* Visual pulsating locator for current ongoing stop destination */}
+                {isCurrent && (
+                  <div className="absolute -inset-2.5 rounded-full bg-amber-400/30 animate-pulse border border-amber-400/20"></div>
+                )}
+                
+                {/* Rounded Map Marker Pin with Sequence Number */}
+                <div className={`w-4.5 h-4.5 rounded-full border-1.5 flex items-center justify-center shadow-md text-[8.5px] font-bold font-mono transition-colors ${markerColorClass}`}>
+                  {idx + 1}
+                </div>
+                
+                {/* Clean inline client name tooltip above the marker on hover */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 bg-slate-900/90 border border-slate-800 text-white rounded p-1 text-[8px] font-semibold whitespace-nowrap shadow-lg pointer-events-none opacity-0 group-hover/stop:opacity-100 transition-opacity z-50">
+                  {stop.clientName}
+                </div>
+
+                {/* Micro info display below marker */}
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-1 bg-slate-950/80 border border-slate-900 rounded-[3px] text-[7px] text-slate-400 font-mono scale-90 select-none group-hover/stop:scale-100 transition-all">
+                  #{idx + 1}
+                </div>
+
+                {/* Heavy detailed popover tooltip when specifically hovering the stop */}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3.5 bg-slate-950/95 border border-slate-850 text-slate-100 rounded-xl p-3 shadow-2xl transition-all duration-200 w-60 opacity-0 pointer-events-none group-hover/stop:opacity-100 group-hover/stop:pointer-events-auto invisible group-hover/stop:visible z-50">
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2 h-2 bg-slate-950 border-r border-b border-slate-850 rotate-45"></div>
+                  
+                  <div className="flex items-center justify-between border-b border-slate-800/60 pb-1.5 mb-1.5">
+                    <span className="text-[10px] font-extrabold text-white truncate max-w-[130px]">
+                      {stop.clientName}
+                    </span>
+                    <span className={`px-1.5 py-0.5 rounded text-[7.5px] font-mono font-bold uppercase ${tooltipStatusClass}`}>
+                      {statusLabel}
+                    </span>
+                  </div>
+                  
+                  <p className="text-[9px] text-slate-400 mb-2 leading-relaxed">📍 {stop.address}</p>
+                  
+                  <div className="flex justify-between items-center text-[8px] text-slate-500 font-mono border-t border-slate-900/80 pt-1.5">
+                    <span>Sequência: #{idx + 1} / {activeRoute.stops.length}</span>
+                    <span className="truncate max-w-[90px] text-indigo-400 font-medium">Motorista: {d.name}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          });
+        })}
 
         {/* Render Driver vehicle coordinates markers */}
         {filteredDrivers.map(d => {
@@ -635,6 +788,11 @@ const TelemetryMap = React.memo(function TelemetryMap({
   for (let i = 0; i < prevProps.filteredDrivers.length; i++) {
     const p = prevProps.filteredDrivers[i];
     const n = nextProps.filteredDrivers[i];
+    
+    // Track stop status updates dynamically to force rendering changes
+    const pStopsStr = p.activeRoute?.stops.map((s: any) => s.status).join(',') || '';
+    const nStopsStr = n.activeRoute?.stops.map((s: any) => s.status).join(',') || '';
+
     if (
       p.driverId !== n.driverId ||
       p.lat !== n.lat ||
@@ -642,7 +800,8 @@ const TelemetryMap = React.memo(function TelemetryMap({
       p.heading !== n.heading ||
       p.speed !== n.speed ||
       p.activeRouteName !== n.activeRouteName ||
-      p.activeRouteStopsCount !== n.activeRouteStopsCount
+      p.activeRouteStopsCount !== n.activeRouteStopsCount ||
+      pStopsStr !== nStopsStr
     ) {
       return false;
     }

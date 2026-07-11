@@ -8,7 +8,8 @@ import { RouteUser, UserRole } from '../types';
 import { REGIONS_LIST } from '../mockData';
 import { 
   User, Mail, Phone, MapPin, Award, Truck, Calendar, Save, CheckCircle2,
-  Sliders, Bell, Palette, Sparkles, Smile, Info, HeartHandshake, ShieldCheck
+  Sliders, Bell, Palette, Sparkles, Smile, Info, HeartHandshake, ShieldCheck,
+  Camera, Upload, Trash2, Image as ImageIcon
 } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -16,20 +17,6 @@ interface UserProfilePageProps {
   user: RouteUser;
   onUpdateProfile: (updated: RouteUser) => Promise<void>;
 }
-
-// Preset color options for personalized accent
-const ACCENT_COLORS = [
-  { name: 'Índigo', class: 'bg-indigo-600', hoverClass: 'ring-indigo-300', value: 'indigo' },
-  { name: 'Esmeralda', class: 'bg-emerald-600', hoverClass: 'ring-emerald-300', value: 'emerald' },
-  { name: 'Sky Celeste', class: 'bg-sky-600', hoverClass: 'ring-sky-300', value: 'sky' },
-  { name: 'Rosa Vibrante', class: 'bg-rose-600', hoverClass: 'ring-rose-300', value: 'rose' },
-  { name: 'Ambar Ouro', class: 'bg-amber-500', hoverClass: 'ring-amber-300', value: 'amber' },
-  { name: 'Ardósia', class: 'bg-slate-700', hoverClass: 'ring-slate-300', value: 'slate' },
-  { name: 'Violeta', class: 'bg-violet-600', hoverClass: 'ring-violet-300', value: 'violet' },
-];
-
-// Preset avatar emojis
-const AVATAR_EMOJIS = ['🚚', '🚀', '💼', '👑', '🛡️', '🎧', '📦', '⚡', '🔥', '🌟', '💻', '🗺️', '☕', '👍'];
 
 export default function UserProfilePage({ user, onUpdateProfile }: UserProfilePageProps) {
   // Common states
@@ -48,8 +35,8 @@ export default function UserProfilePage({ user, onUpdateProfile }: UserProfilePa
 
   // Personalized customization states (extend attributes as user customized options)
   const [bio, setBio] = useState((user as any).bio || 'Logística e Operações prioritárias!');
-  const [accentColor, setAccentColor] = useState((user as any).accentColor || 'indigo');
-  const [avatarEmoji, setAvatarEmoji] = useState((user as any).avatarEmoji || '💼');
+  const [photoUrl, setPhotoUrl] = useState(user.photoUrl || '');
+  const [isDragging, setIsDragging] = useState(false);
   const [playNotificationSounds, setPlayNotificationSounds] = useState((user as any).playNotificationSounds !== false);
   const [allowTelemetryLogs, setAllowTelemetryLogs] = useState((user as any).allowTelemetryLogs !== false);
 
@@ -78,15 +65,52 @@ export default function UserProfilePage({ user, onUpdateProfile }: UserProfilePa
   };
 
   const currentThemeHex = () => {
-    switch (accentColor) {
-      case 'emerald': return 'bg-emerald-600 hover:bg-emerald-700 ring-emerald-500/20';
-      case 'sky': return 'bg-sky-600 hover:bg-sky-700 ring-sky-500/20';
-      case 'rose': return 'bg-rose-600 hover:bg-rose-700 ring-rose-500/20';
-      case 'amber': return 'bg-amber-500 hover:bg-amber-600 ring-amber-500/20';
-      case 'slate': return 'bg-slate-700 hover:bg-slate-850 ring-slate-500/20';
-      case 'violet': return 'bg-violet-600 hover:bg-violet-700 ring-violet-500/20';
-      default: return 'bg-indigo-600 hover:bg-indigo-700 ring-indigo-500/20';
+    return 'bg-indigo-600 hover:bg-indigo-700 ring-indigo-500/20';
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        alert('Por favor, selecione um arquivo de imagem válido.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPhotoUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
     }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        alert('Por favor, selecione um arquivo de imagem válido.');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setPhotoUrl(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleRemovePhoto = () => {
+    setPhotoUrl('');
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -113,8 +137,7 @@ export default function UserProfilePage({ user, onUpdateProfile }: UserProfilePa
       phone,
       address,
       bio,
-      accentColor,
-      avatarEmoji,
+      photoUrl,
       playNotificationSounds,
       allowTelemetryLogs,
       ...(user.role === UserRole.GERENTE ? { region } : {}),
@@ -152,19 +175,28 @@ export default function UserProfilePage({ user, onUpdateProfile }: UserProfilePa
         
         {/* Background visual detail */}
         <div className="absolute right-0 top-0 bottom-0 opacity-10 pointer-events-none w-1/3 flex items-center justify-center font-mono select-none">
-          <Palette className="w-40 h-40 transform rotate-12" />
+          <Camera className="w-40 h-40 transform rotate-12" />
         </div>
 
         <div className="flex flex-col md:flex-row items-center gap-5 relative z-10">
           
           {/* Main customized Avatar badge */}
           <div className="relative group">
-            <div className={`w-20 h-20 md:w-24 md:h-24 rounded-2xl bg-white/10 backdrop-blur-md border-2 border-white/30 flex items-center justify-center text-4xl shadow-inner transition-transform group-hover:scale-105 duration-300 select-none`}>
-              {avatarEmoji}
-            </div>
+            {photoUrl ? (
+              <img 
+                src={photoUrl} 
+                alt="Foto de Perfil" 
+                referrerPolicy="no-referrer"
+                className="w-20 h-20 md:w-24 md:h-24 rounded-2xl object-cover border-2 border-white/30 shadow-inner transition-transform group-hover:scale-105 duration-300"
+              />
+            ) : (
+              <div className="w-20 h-20 md:w-24 md:h-24 rounded-2xl bg-white/10 backdrop-blur-md border-2 border-white/30 flex items-center justify-center text-indigo-250 shadow-inner transition-transform group-hover:scale-105 duration-300 select-none">
+                <User className="w-10 h-10 md:w-12 md:h-12 text-slate-300" />
+              </div>
+            )}
             
-            <div className="absolute -bottom-1 -right-1 bg-indigo-600 text-white border-2 border-slate-950 w-7 h-7 rounded-xl flex items-center justify-center text-xs shadow" title="Avatar Customizado">
-              <Sparkles className="w-3.5 h-3.5" />
+            <div className="absolute -bottom-1 -right-1 bg-indigo-600 text-white border-2 border-slate-950 w-7 h-7 rounded-xl flex items-center justify-center text-xs shadow" title="Foto do Perfil">
+              <Camera className="w-3.5 h-3.5" />
             </div>
           </div>
 
@@ -428,59 +460,65 @@ export default function UserProfilePage({ user, onUpdateProfile }: UserProfilePa
 
         </div>
 
-        {/* Right sidebar column: custom personalization assets */}
+        {/* Right sidebar column: custom profile photo and settings */}
         <div className="lg:col-span-1 space-y-6">
           
-          {/* Personalization card */}
+          {/* Profile Photo card */}
           <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-5 text-xs text-slate-650">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
               <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600">
-                <Palette className="w-4.5 h-4.5" />
+                <Camera className="w-4.5 h-4.5" />
               </div>
-              <h2 className="font-extrabold text-slate-800 text-sm uppercase tracking-wide">Personalização Visual</h2>
+              <h2 className="font-extrabold text-slate-800 text-sm uppercase tracking-wide">Foto do Perfil</h2>
             </div>
 
-            {/* Accent Theme selection */}
-            <div className="space-y-3.5">
-              <label className="text-[11px] text-slate-400 font-bold uppercase block tracking-wider">Accent Theme Color</label>
-              <div className="grid grid-cols-2 gap-2 text-[11px]">
-                {ACCENT_COLORS.map((color) => (
+            {/* Photo upload dropzone */}
+            <div className="space-y-3">
+              <label className="text-[11px] text-slate-400 font-bold uppercase block tracking-wider">Imagem de Identificação</label>
+              
+              {photoUrl ? (
+                <div className="relative rounded-2xl border border-slate-200 p-2 bg-slate-50 flex flex-col items-center">
+                  <img 
+                    src={photoUrl} 
+                    alt="Previsão de Foto" 
+                    referrerPolicy="no-referrer"
+                    className="w-32 h-32 rounded-xl object-cover border border-slate-200 shadow-sm"
+                  />
                   <button
-                    key={color.value}
                     type="button"
-                    onClick={() => setAccentColor(color.value)}
-                    className={`p-2 rounded-xl border flex items-center gap-2 transition-all cursor-pointer ${
-                      accentColor === color.value 
-                        ? 'bg-slate-50 border-slate-300 ring-2 ring-slate-900/10 font-bold text-slate-800' 
-                        : 'border-slate-150 hover:bg-slate-50/50 text-slate-600'
-                    }`}
+                    onClick={handleRemovePhoto}
+                    className="mt-3 py-1.5 px-3 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-lg text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-colors"
                   >
-                    <span className={`w-3 h-3 rounded-full shrink-0 ${color.class}`} />
-                    {color.name}
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Remover Imagem
                   </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Emoji Avatar picker */}
-            <div className="space-y-1.5 pt-2 border-t border-slate-100">
-              <label className="text-[11px] text-slate-400 font-bold uppercase block tracking-wider">Selecione seu Avatar Emoji</label>
-              <div className="grid grid-cols-5 gap-2 pt-1">
-                {AVATAR_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    onClick={() => setAvatarEmoji(emoji)}
-                    className={`text-2xl p-2.5 rounded-xl border flex items-center justify-center cursor-pointer transition-all ${
-                      avatarEmoji === emoji 
-                        ? 'bg-indigo-50 border-indigo-300 scale-110 shadow-sm ring-1 ring-indigo-300' 
-                        : 'border-slate-150 hover:bg-slate-50'
-                    }`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
+                </div>
+              ) : (
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-2xl p-6 flex flex-col items-center justify-center text-center cursor-pointer transition-all duration-200 ${
+                    isDragging 
+                      ? 'border-indigo-500 bg-indigo-50/50 scale-[1.02]' 
+                      : 'border-slate-250 hover:border-slate-350 hover:bg-slate-50/30'
+                  }`}
+                  onClick={() => document.getElementById('profile-photo-input')?.click()}
+                >
+                  <Upload className={`w-8 h-8 mb-2 transition-colors ${isDragging ? 'text-indigo-600' : 'text-slate-400'}`} />
+                  <p className="font-extrabold text-slate-700 text-[11px] mb-1">Arraste sua foto aqui</p>
+                  <p className="text-[9px] text-slate-400 leading-snug">ou clique para procurar no seu dispositivo</p>
+                  <p className="text-[8px] text-slate-400 font-mono mt-2 uppercase tracking-wide bg-slate-100 px-2 py-0.5 rounded">PNG, JPG ou GIF</p>
+                  
+                  <input
+                    id="profile-photo-input"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="hidden"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Biography Text Message */}

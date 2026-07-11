@@ -974,6 +974,115 @@ export function MotoristaDashboard({
               </div>
             )}
 
+            {/* GPS Navigation shortcuts for active route */}
+            {activeRoute && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-slate-800">
+                <div className="flex flex-col justify-between space-y-2">
+                  <div>
+                    <h4 className="font-bold text-xs text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
+                      <Navigation className="w-3.5 h-3.5 text-indigo-600" />
+                      Navegar Rota Completa
+                    </h4>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Abra todo o roteiro sequencial com todas as paradas planejadas e otimizadas no Google Maps.
+                    </p>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const originStr = `${activeRoute.originLat},${activeRoute.originLng}`;
+                        const stopsCount = activeRoute.stops.length;
+                        if (stopsCount === 0) {
+                          alert('Nenhuma parada cadastrada nesta rota.');
+                          return;
+                        }
+                        
+                        let destStr = '';
+                        let waypointsStr = '';
+                        
+                        if (stopsCount === 1) {
+                          destStr = `${activeRoute.stops[0].lat},${activeRoute.stops[0].lng}`;
+                        } else {
+                          const lastStop = activeRoute.stops[stopsCount - 1];
+                          destStr = `${lastStop.lat},${lastStop.lng}`;
+                          const intermediateStops = activeRoute.stops.slice(0, -1);
+                          waypointsStr = intermediateStops.map(s => `${s.lat},${s.lng}`).join('|');
+                        }
+                        
+                        let gMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(originStr)}&destination=${encodeURIComponent(destStr)}`;
+                        if (waypointsStr) {
+                          gMapsUrl += `&waypoints=${encodeURIComponent(waypointsStr)}`;
+                        }
+                        
+                        window.open(gMapsUrl, '_blank');
+                      }}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+                    >
+                      <Map className="w-3.5 h-3.5 text-white" />
+                      Abrir Roteiro Completo (Google Maps)
+                    </button>
+                  </div>
+                </div>
+
+                {(() => {
+                  const currentStop = activeRoute.stops[activeRoute.currentStopIndex];
+                  if (!currentStop) return (
+                    <div className="bg-white border border-slate-200/80 rounded-xl p-3 flex items-center justify-center text-center">
+                      <p className="text-[11px] text-slate-400 font-medium">Todas as entregas foram finalizadas!</p>
+                    </div>
+                  );
+                  
+                  return (
+                    <div className="bg-white border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between space-y-2.5 shadow-sm">
+                      <div>
+                        <span className="text-[9px] font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded uppercase">
+                          Próxima Parada ({activeRoute.currentStopIndex + 1}/{activeRoute.stops.length})
+                        </span>
+                        <h5 className="font-bold text-xs text-slate-800 mt-1 truncate">
+                          {currentStop.clientName}
+                        </h5>
+                        <p className="text-[10px] text-slate-400 truncate" title={currentStop.address}>
+                          📍 {currentStop.address}
+                        </p>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const gMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${currentStop.lat},${currentStop.lng}`;
+                            window.open(gMapsUrl, '_blank');
+                          }}
+                          className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer"
+                        >
+                          <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                          </svg>
+                          Google Maps
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const wazeUrl = `https://waze.com/ul?ll=${currentStop.lat},${currentStop.lng}&navigate=yes`;
+                            window.open(wazeUrl, '_blank');
+                          }}
+                          className="flex items-center justify-center gap-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-100 text-sky-700 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer"
+                        >
+                          <svg className="w-3.5 h-3.5 text-sky-500" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
+                          </svg>
+                          Waze
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
             <div className="flex items-center justify-between select-none">
               <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">Monitor de Mapa:</span>
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
@@ -2099,26 +2208,39 @@ export function MotoristaDashboard({
                         </div>
 
                         {/* Customer Quick Actions */}
-                        <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+                        <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
                           {currentStop.clientWhatsApp && (
                             <a
                               href={`https://wa.me/${currentStop.clientWhatsApp.replace(/\D/g, '')}`}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="flex-1 py-2.5 bg-white border border-slate-200 hover:border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
+                              className="flex-1 min-w-[100px] py-2.5 bg-white border border-slate-200 hover:border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
                             >
                               <Phone className="w-3.5 h-3.5 text-emerald-500 fill-emerald-150 inline" />
                               <span className="align-middle ml-1">WhatsApp</span>
                             </a>
                           )}
                           <a
-                            href={`https://www.google.com/maps/search/?api=1&query=${currentStop.lat},${currentStop.lng}`}
+                            href={`https://www.google.com/maps/dir/?api=1&destination=${currentStop.lat},${currentStop.lng}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex-1 py-2.5 bg-white border border-slate-200 hover:border-indigo-200 text-indigo-800 hover:bg-indigo-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
+                            className="flex-1 min-w-[100px] py-2.5 bg-white border border-slate-200 hover:border-indigo-200 text-indigo-800 hover:bg-indigo-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
                           >
-                            <MapPin className="w-3.5 h-3.5 text-indigo-500 inline" />
-                            <span className="align-middle ml-1">Navegar</span>
+                            <svg className="w-3.5 h-3.5 text-emerald-600 inline" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                            </svg>
+                            <span className="align-middle ml-1">Google Maps</span>
+                          </a>
+                          <a
+                            href={`https://waze.com/ul?ll=${currentStop.lat},${currentStop.lng}&navigate=yes`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 min-w-[100px] py-2.5 bg-white border border-slate-200 hover:border-sky-200 text-sky-800 hover:bg-sky-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
+                          >
+                            <svg className="w-3.5 h-3.5 text-sky-500 inline" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
+                            </svg>
+                            <span className="align-middle ml-1">Waze</span>
                           </a>
                         </div>
                       </div>

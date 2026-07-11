@@ -19,6 +19,7 @@ export interface BaseUser {
   role: UserRole;
   status: 'active' | 'suspended' | 'banned';
   createdAt: string;
+  photoUrl?: string;
 }
 
 export interface AdminUser extends BaseUser {

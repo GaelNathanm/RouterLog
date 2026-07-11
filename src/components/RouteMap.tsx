@@ -276,6 +276,43 @@ export default function RouteMap({
           </div>
         `;
 
+        // One-tap navigation buttons for drivers
+        const navContainer = document.createElement('div');
+        navContainer.className = 'mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2';
+        
+        const gmapsBtn = document.createElement('button');
+        gmapsBtn.type = 'button';
+        gmapsBtn.className = 'py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center cursor-pointer flex items-center justify-center gap-1';
+        gmapsBtn.innerHTML = `
+          <svg class="w-2.5 h-2.5 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+          </svg> Google Maps
+        `;
+        gmapsBtn.onclick = () => {
+          window.open(`https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}`, '_blank');
+        };
+
+        const wazeBtn = document.createElement('button');
+        wazeBtn.type = 'button';
+        wazeBtn.className = 'py-1.5 px-2 bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-800 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center cursor-pointer flex items-center justify-center gap-1';
+        wazeBtn.innerHTML = `
+          <svg class="w-2.5 h-2.5 text-sky-500" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
+          </svg> Waze
+        `;
+        wazeBtn.onclick = () => {
+          // Open via schema waze://
+          window.open(`waze://?ll=${stop.lat},${stop.lng}&navigate=yes`, '_self');
+          // Fallback to standard URL in a new tab if scheme doesn't respond instantly
+          setTimeout(() => {
+            window.open(`https://waze.com/ul?ll=${stop.lat},${stop.lng}&navigate=yes`, '_blank');
+          }, 300);
+        };
+
+        navContainer.appendChild(gmapsBtn);
+        navContainer.appendChild(wazeBtn);
+        popupDiv.appendChild(navContainer);
+
         if (currentUserRole === 2 && !isCompleted && onStopClick) {
           const btn = document.createElement('button');
           btn.type = 'button';
@@ -837,6 +874,36 @@ export default function RouteMap({
                               {selectedStop.stop.status === 'completed' ? 'CONCLUÍDO ✔' : 'PENDENTE ⏳'}
                             </span>
                             <span className="text-slate-500">Rota: {selectedStop.routeName}</span>
+                          </div>
+
+                          {/* One-tap navigation buttons for drivers */}
+                          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-800 pt-2">
+                            <a
+                              href={`https://www.google.com/maps/dir/?api=1&destination=${selectedStop.stop.lat},${selectedStop.stop.lng}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="py-1.5 px-2 bg-emerald-950 hover:bg-emerald-900 border border-emerald-800 text-emerald-300 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center flex items-center justify-center gap-1 transition-colors"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <svg className="w-2.5 h-2.5 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
+                              </svg> Google Maps
+                            </a>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                window.open(`waze://?ll=${selectedStop.stop.lat},${selectedStop.stop.lng}&navigate=yes`, '_self');
+                                setTimeout(() => {
+                                  window.open(`https://waze.com/ul?ll=${selectedStop.stop.lat},${selectedStop.stop.lng}&navigate=yes`, '_blank');
+                                }, 300);
+                              }}
+                              className="py-1.5 px-2 bg-sky-950 hover:bg-sky-900 border border-sky-800 text-sky-300 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center flex items-center justify-center gap-1 transition-colors"
+                            >
+                              <svg className="w-2.5 h-2.5 text-sky-400" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
+                              </svg> Waze
+                            </button>
                           </div>
 
                           {currentUserRole === 2 && selectedStop.stop.status !== 'completed' && onStopClick && (
