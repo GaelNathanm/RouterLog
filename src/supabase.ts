@@ -5,7 +5,8 @@
 
 import { initializeApp } from 'firebase/app';
 import { 
-  getFirestore, doc, collection, setDoc, deleteDoc, getDocs, onSnapshot, query, arrayUnion, getDocFromServer
+  getFirestore, doc, collection, setDoc, deleteDoc, getDocs, onSnapshot, query, arrayUnion, getDocFromServer,
+  getDoc, where, limit
 } from 'firebase/firestore';
 import { 
   RouteUser, Rota, GPSLocation, ChatMessage, 
@@ -132,6 +133,34 @@ export async function deleteCloudUser(userId: string) {
     await deleteDoc(doc(db, 'users', userId));
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
+  }
+}
+
+export async function getCloudUser(userId: string): Promise<RouteUser | null> {
+  try {
+    const docSnap = await getDoc(doc(db, 'users', userId));
+    if (docSnap.exists()) {
+      return { id: docSnap.id, ...docSnap.data() } as RouteUser;
+    }
+    return null;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `users/${userId}`);
+    return null;
+  }
+}
+
+export async function getCloudUserByEmail(email: string): Promise<RouteUser | null> {
+  try {
+    const q = query(collection(db, 'users'), where('email', '==', email), limit(1));
+    const querySnap = await getDocs(q);
+    if (!querySnap.empty) {
+      const docSnap = querySnap.docs[0];
+      return { id: docSnap.id, ...docSnap.data() } as RouteUser;
+    }
+    return null;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, `users`);
+    return null;
   }
 }
 

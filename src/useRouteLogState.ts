@@ -14,7 +14,8 @@ import {
   saveCloudGPSLocation, saveCloudChat, saveCloudNotification, 
   saveCloudAuditLog, saveCloudPerformanceLog, saveCloudPushLog, 
   resetCloudDatabaseAll, saveCloudRegion, deleteCloudRegion, 
-  subscribeToCollection, deleteCloudUser, saveCloudClient, deleteCloudClient, auth
+  subscribeToCollection, deleteCloudUser, saveCloudClient, deleteCloudClient, auth,
+  getCloudUser, getCloudUserByEmail
 } from './supabase';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
@@ -130,7 +131,14 @@ export function useRouteLogState() {
 
       if (email) {
         let matchedUser: RouteUser | null = null;
-        matchedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase() || u.id === authId) || null;
+        
+        // 1. First, query directly from Firestore by UID to ensure we get the latest data without state race conditions
+        matchedUser = await getCloudUser(authId);
+        
+        // 2. Fallback to searching by email in case we have a pre-existing/pre-seeded profile
+        if (!matchedUser) {
+          matchedUser = await getCloudUserByEmail(email);
+        }
 
         const isAdminEmail = email.toLowerCase() === 'linkalexanderlink@gmail.com' || email.toLowerCase().includes('admin');
 
@@ -849,7 +857,10 @@ export function useRouteLogState() {
           const profileEmail = firebaseUser.email;
           const authId = firebaseUser.uid;
           if (profileEmail) {
-            let matched = users.find(u => u.email.toLowerCase() === profileEmail.toLowerCase() || u.id === authId);
+            let matched = await getCloudUser(authId);
+            if (!matched) {
+              matched = await getCloudUserByEmail(profileEmail);
+            }
             if (matched) {
               if (matched.status === 'banned') {
                 return { success: false, error: 'Esta conta foi permanentemente banida da plataforma.' };
@@ -931,7 +942,10 @@ export function useRouteLogState() {
       return { success: true, user: admin };
     }
 
-    const matched = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    let matched = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!matched) {
+      matched = await getCloudUserByEmail(email);
+    }
     if (matched) {
       if (matched.status === 'banned') {
         return { success: false, error: 'Esta conta foi permanentemente banida da plataforma.' };

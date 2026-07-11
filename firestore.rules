@@ -32,7 +32,7 @@ service cloud.firestore {
 
     // Regras para a Coleção de Usuários
     match /users/{userId} {
-      allow read, write: if isAuthed();
+      allow read, create, update, delete: if isAuthed();
     }
 
     // Regras para a Coleção de Regiões
