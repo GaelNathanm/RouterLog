@@ -7,7 +7,6 @@ import React, { useState, useEffect } from 'react';
 import { useRouteLogState } from './useRouteLogState';
 import { UserRole } from './types';
 import UserLoginMenu from './components/UserLoginMenu';
-import TechDocumentation from './components/TechDocumentation';
 import AdminLoginGateway from './components/AdminLoginGateway';
 import ActiveSessionBlocker from './components/ActiveSessionBlocker';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -70,7 +69,7 @@ export default function App() {
     resetAllData
   } = useRouteLogState();
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'profile' | 'docs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'profile'>('dashboard');
   const [fcmToast, setFcmToast] = useState<{ title: string; body: string; type: string } | null>(null);
   const [currentPathname, setCurrentPathname] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
 
@@ -157,8 +156,7 @@ export default function App() {
   const matchesGerenteRole = activeSessionUser && (Number(activeSessionUser.role) === UserRole.GERENTE || String(activeSessionUser.role) === '1' || String(activeSessionUser.role).toLowerCase() === 'gerente');
 
   const isWidescreen = activeSessionUser && 
-    (matchesAdminRole || matchesGerenteRole) && 
-    activeTab !== 'docs';
+    (matchesAdminRole || matchesGerenteRole);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
@@ -239,17 +237,6 @@ export default function App() {
                   Meu Perfil
                 </button>
               )}
-              <button
-                onClick={() => setActiveTab('docs')}
-                className={`px-4 py-2 rounded-lg transition-all flex items-center gap-1.5 font-bold cursor-pointer ${
-                  activeTab === 'docs' 
-                    ? 'bg-blue-600 text-white shadow-sm' 
-                    : 'text-slate-500 hover:text-slate-950 hover:bg-slate-200/50'
-                }`}
-              >
-                <Network className="w-3.5 h-3.5" />
-                Especificações Técnicas
-              </button>
             </div>
           </div>
         </div>
@@ -322,19 +309,7 @@ export default function App() {
           )}
 
           <AnimatePresence mode="wait">
-            {activeTab === 'docs' ? (
-              // Tab 2: Technical architecture specs
-              <motion.div
-                key="docs"
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -15 }}
-                transition={{ duration: 0.25, ease: "easeInOut" }}
-                className="flex-1"
-              >
-                <TechDocumentation />
-              </motion.div>
-            ) : activeTab === 'profile' && activeSessionUser ? (
+            {activeTab === 'profile' && activeSessionUser ? (
               // Tab 3: Editable and personalized profile page
               <motion.div
                 key="profile"
@@ -460,6 +435,7 @@ export default function App() {
                           onPostMessage={handlePostMessage}
                           onOptimize={handleOptimizeRoute}
                           offlineQueueLength={offlineQueueLength}
+                          onUpdateUser={handleUpdateUser}
                         />
                       )}
 

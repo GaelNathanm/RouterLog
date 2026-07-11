@@ -32,20 +32,7 @@ export default function ControlPanelMockMap({
   const [selectedRegionFilter, setSelectedRegionFilter] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
-    const R = 6371e3; // metres
-    const phi1 = (lat1 * Math.PI) / 180;
-    const phi2 = (lat2 * Math.PI) / 180;
-    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
-    const deltaLambda = ((lng2 - lng1) * Math.PI) / 180;
 
-    const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
-              Math.cos(phi1) * Math.cos(phi2) *
-              Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-    return R * c; // in meters
-  };
 
   // Extrapolate list of drivers and enrich with user metadata
   const driversWithTelemetry = useMemo(() => {
@@ -87,62 +74,7 @@ export default function ControlPanelMockMap({
     });
   }, [driversWithTelemetry, selectedRegionFilter, searchQuery]);
 
-  // Compute bounding box dynamic coordinates to map coordinates to screen percentages
-  const mapBounds = useMemo(() => {
-    const basicDefaultBounds = {
-      minLat: -20.5,
-      maxLat: -18.5,
-      minLng: -44.5,
-      maxLng: -40.0
-    };
 
-    if (filteredDrivers.length === 0) {
-      return basicDefaultBounds;
-    }
-
-    // Add warehouse coordinates to bounds to keep things centered
-    const boundsPoints = [
-      ...filteredDrivers.map(d => ({ lat: d.lat, lng: d.lng })),
-      { lat: -18.845, lng: -41.945 }, // CD Governador Valadares
-      { lat: -19.932, lng: -43.942 }  // CD Belo Horizonte
-    ];
-
-    let minLat = Math.min(...boundsPoints.map(p => p.lat));
-    let maxLat = Math.max(...boundsPoints.map(p => p.lat));
-    let minLng = Math.min(...boundsPoints.map(p => p.lng));
-    let maxLng = Math.max(...boundsPoints.map(p => p.lng));
-
-    // Pad latitude and longitude ranges
-    const latSpan = maxLat - minLat;
-    const lngSpan = maxLng - minLng;
-    const paddingMultiplier = 0.25;
-
-    return {
-      minLat: minLat - Math.max(latSpan * paddingMultiplier, 0.15),
-      maxLat: maxLat + Math.max(latSpan * paddingMultiplier, 0.15),
-      minLng: minLng - Math.max(lngSpan * paddingMultiplier, 0.15),
-      maxLng: maxLng + Math.max(lngSpan * paddingMultiplier, 0.15)
-    };
-  }, [filteredDrivers]);
-
-  // Linear projection helper
-  const projectCoordinates = (lat: number, lng: number) => {
-    const latSpan = mapBounds.maxLat - mapBounds.minLat;
-    const lngSpan = mapBounds.maxLng - mapBounds.minLng;
-
-    const xPercent = ((lng - mapBounds.minLng) / (lngSpan || 1)) * 100;
-    // Invert Y direction since latitude goes up and SVG/pixel Y goes down
-    const yPercent = 100 - (((lat - mapBounds.minLat) / (latSpan || 1)) * 100);
-
-    return {
-      x: `${Math.max(4, Math.min(96, xPercent))}%`,
-      y: `${Math.max(4, Math.min(92, yPercent))}%`
-    };
-  };
-
-  const activeDriverSelected = useMemo(() => {
-    return driversWithTelemetry.find(d => d.driverId === selectedDriverId) || null;
-  }, [driversWithTelemetry, selectedDriverId]);
 
   return (
     <div id="control-panel-mock-map-widget" className="bg-white border border-slate-200/90 rounded-2xl shadow-sm mb-6 overflow-hidden flex flex-col">
@@ -307,291 +239,415 @@ export default function ControlPanelMockMap({
               </div>
             </div>
 
-            {/* Simulated 2D Telemetry Space (Interactive Grid Mapping) */}
-            <div className="flex-1 bg-slate-950 relative overflow-hidden flex flex-col justify-between">
-              
-              {/* Alert Overlap indicating Fallback Mode */}
-              <div className="absolute top-2.5 left-3 z-10 pointer-events-none select-none max-w-[280px] lg:max-w-md">
-                <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 text-amber-400 text-[9px] uppercase font-mono px-2.5 py-1 rounded-full shadow-lg backdrop-blur-xs">
-                  <Signal className="w-3 h-3 animate-pulse text-amber-400" />
-                  <span>Espaço de Coordenadas de Contingência local</span>
-                </div>
-              </div>
-
-              <div className="absolute top-2.5 right-3 z-10 pointer-events-none select-none">
-                <span className="p-0.5 px-1.5 bg-slate-900/90 border border-slate-800 text-slate-400 text-[8px] uppercase tracking-widest font-mono rounded-md">
-                  GRID SCALE: LINEAR PROJECTION
-                </span>
-              </div>
-
-              {/* Central Map Workspace container with Grid Canvas representation */}
-              <div className="flex-1 w-full h-full relative cursor-crosshair">
-                
-                {/* Background Tech Mesh lines */}
-                <div className="absolute inset-0 select-none opacity-[0.22] pointer-events-none">
-                  <div className="w-full h-full bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:28px_28px]"></div>
-                  {/* Concentric rings from center */}
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border border-dashed border-slate-800 rounded-full"></div>
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] h-[440px] border border-dashed border-slate-800/60 rounded-full"></div>
-                </div>
-
-                {/* Plot: Distribution Centers (CD Reference points) */}
-                {/* CD 1: Governador Valadares */}
-                {(selectedRegionFilter === 'all' || selectedRegionFilter === 'GV1') && (
-                  <div 
-                    id="cd-point-gv"
-                    style={{
-                      left: projectCoordinates(-18.845, -41.945).x,
-                      top: projectCoordinates(-18.845, -41.945).y
-                    }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 z-5 group cursor-help transition-all"
-                  >
-                    <div className="w-3 h-3 bg-blue-500 rounded-full border border-white flex items-center justify-center shadow-lg relative">
-                      <div className="absolute -inset-2 bg-blue-500 animate-ping rounded-full opacity-15"></div>
-                    </div>
-                    {/* Hover label for CD */}
-                    <div className="absolute left-4 -top-3 bg-slate-900 border border-slate-800 rounded-md p-1.5 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 shadow-xl">
-                      <span className="text-[10px] font-black text-blue-400 block font-mono">CD GOVERNADOR VALADARES</span>
-                      <span className="text-[9px] text-slate-300 block">Sede Operacional Regional</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* CD 2: Belo Horizonte */}
-                {(selectedRegionFilter === 'all' || selectedRegionFilter === 'ES/MG') && (
-                  <div 
-                    id="cd-point-bh"
-                    style={{
-                      left: projectCoordinates(-19.932, -43.942).x,
-                      top: projectCoordinates(-19.932, -43.942).y
-                    }}
-                    className="absolute -translate-x-1/2 -translate-y-1/2 z-5 group cursor-help transition-all"
-                  >
-                    <div className="w-3 h-3 bg-indigo-500 rounded-full border border-white flex items-center justify-center shadow-lg relative">
-                      <div className="absolute -inset-2 bg-indigo-500 animate-ping rounded-full opacity-15"></div>
-                    </div>
-                    {/* Hover info for CD */}
-                    <div className="absolute left-4 -top-3 bg-slate-900 border border-slate-800 rounded-md p-1.5 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 shadow-xl">
-                      <span className="text-[10px] font-black text-indigo-400 block font-mono">CD BELO HORIZONTE</span>
-                      <span className="text-[9px] text-slate-300 block">Sede Região Central & ES/MG</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Render Driver vehicle coordinates markers */}
-                {filteredDrivers.map(d => {
-                  const isSelected = selectedDriverId === d.driverId;
-                  const isHovered = hoveredDriverId === d.driverId;
-                  const coords = projectCoordinates(d.lat, d.lng);
-                  const angle = d.heading || 0;
-
-                  const activeRoute = d.activeRoute;
-                  const stops = activeRoute?.stops || [];
-                  const currentStopIdx = activeRoute?.currentStopIndex ?? 0;
-                  const currentStop = stops[currentStopIdx];
-
-                  let currentStatusText = "Sem Rota Ativa";
-                  let etaText = "N/A";
-                  let nextStopText = "Nenhum";
-                  let distanceText = "N/A";
-
-                  if (activeRoute) {
-                    if (d.speed > 0) {
-                      currentStatusText = "Em Deslocamento";
-                    } else {
-                      currentStatusText = "Parado / Em Operação";
-                    }
-
-                    if (currentStop) {
-                      nextStopText = currentStop.clientName;
-                      const distMeters = getDistanceInMeters(d.lat, d.lng, currentStop.lat, currentStop.lng);
-                      
-                      if (distMeters < 1000) {
-                        distanceText = `${Math.round(distMeters)} metros`;
-                      } else {
-                        distanceText = `${(distMeters / 1000).toFixed(1)} km`;
-                      }
-
-                      // Estimate minutes
-                      const speedKmh = d.speed > 0 ? d.speed : 30; // fallback to 30km/h if static
-                      const speedMps = (speedKmh * 1000) / 3600;
-                      const timeSeconds = distMeters / speedMps;
-                      const timeMinutes = Math.max(1, Math.ceil(timeSeconds / 60));
-
-                      const etaDate = new Date();
-                      etaDate.setMinutes(etaDate.getMinutes() + timeMinutes);
-                      
-                      const formattedTime = etaDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                      etaText = `${formattedTime} (em ~${timeMinutes} min)`;
-                    }
-                  } else {
-                    currentStatusText = d.speed > 0 ? "Em Trânsito" : "Disponível (Pátio)";
-                  }
-
-                  return (
-                    <div
-                      id={`marker-${d.driverId}`}
-                      key={d.driverId}
-                      style={{
-                        left: coords.x,
-                        top: coords.y,
-                      }}
-                      onMouseEnter={() => setHoveredDriverId(d.driverId)}
-                      onMouseLeave={() => setHoveredDriverId(null)}
-                      onClick={() => setSelectedDriverId(isSelected ? null : d.driverId)}
-                      className={`absolute -translate-x-1/2 -translate-y-1/2 z-10 cursor-pointer transition-all ${
-                        isSelected ? "z-30 scale-110" : "hover:scale-105"
-                      }`}
-                    >
-                      {/* Interactive pulsed ring around vehicle based on selection state */}
-                      <div className={`absolute -inset-3.5 rounded-full transition-all duration-300 ${
-                        isSelected 
-                          ? "bg-indigo-500/25 border border-indigo-400 animate-ping" 
-                          : isHovered 
-                          ? "bg-slate-200/10 border border-slate-700/50" 
-                          : "bg-transparent border border-transparent"
-                      }`}></div>
-
-                      {/* Direction pin pointer */}
-                      <div className={`p-2 rounded-xl border flex items-center justify-center relative shadow-xl transition-colors ${
-                        isSelected 
-                          ? "bg-indigo-600 text-white border-white" 
-                          : isHovered 
-                          ? "bg-indigo-500 text-white border-indigo-400" 
-                          : "bg-slate-900 text-slate-200 border-slate-800 hover:border-indigo-400"
-                      }`}>
-                        
-                        {/* Heading arrow representing active displacement heading direction */}
-                        <div 
-                          style={{ transform: `rotate(${angle}deg)` }}
-                          className="absolute -top-1.5 -right-1.5 bg-slate-900 border border-slate-700 text-emerald-400 p-0.5 rounded-full"
-                        >
-                          <Navigation className="w-2 h-2 fill-current" />
-                        </div>
-
-                        <Truck className="w-3.5 h-3.5" />
-                      </div>
-
-                      {/* Floating tooltip block above pin */}
-                      <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3.5 bg-slate-950/95 border border-slate-850/90 text-slate-100 rounded-xl p-3 shadow-2xl transition-all duration-300 w-72 whitespace-normal select-none pointer-events-none backdrop-blur-sm ${
-                        isSelected || isHovered ? "opacity-100 scale-100 translate-y-0 visible" : "opacity-0 scale-95 translate-y-2 invisible"
-                      }`}>
-                        {/* Tooltip Arrow */}
-                        <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-slate-950 border-r border-b border-slate-850/90 rotate-45"></div>
-
-                        {/* Header: Driver Info & Region */}
-                        <div className="flex items-start justify-between border-b border-slate-800/60 pb-2 mb-2">
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[11px] font-extrabold text-white block truncate tracking-tight">
-                              {d.name}
-                            </span>
-                            <span className="text-[9px] text-slate-400 block font-mono">
-                              {d.vehicleModel} • {d.plate}
-                            </span>
-                          </div>
-                          <span className="p-0.5 px-1.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[8px] rounded font-mono font-bold uppercase tracking-wide">
-                            {d.region}
-                          </span>
-                        </div>
-
-                        {/* Interactive Data Block */}
-                        <div className="space-y-1.5 text-[10px]">
-                          {/* Current Status Row */}
-                          <div className="flex items-center justify-between">
-                            <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">Status Atual:</span>
-                            <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] font-mono flex items-center gap-1 uppercase ${
-                              activeRoute 
-                                ? d.speed > 0 
-                                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
-                                  : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                : "bg-slate-800 text-slate-400 border border-slate-700/50"
-                            }`}>
-                              <span className={`w-1 h-1 rounded-full ${
-                                activeRoute ? d.speed > 0 ? "bg-emerald-400 animate-pulse" : "bg-amber-400" : "bg-slate-400"
-                              }`}></span>
-                              {currentStatusText}
-                            </span>
-                          </div>
-
-                          {/* Active Route Row */}
-                          {activeRoute && (
-                            <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5">
-                              <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">Rota Ativa:</span>
-                              <span className="text-indigo-400 font-bold font-mono truncate max-w-[160px]">
-                                {activeRoute.name}
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Next Stop Row */}
-                          {activeRoute && currentStop && (
-                            <>
-                              <div className="flex items-start justify-between border-t border-slate-850/50 pt-1.5 gap-2">
-                                <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider shrink-0 mt-0.5">Destino Atual:</span>
-                                <div className="text-right min-w-0 flex-1">
-                                  <span className="text-slate-200 font-bold block truncate">
-                                    {nextStopText}
-                                  </span>
-                                  <span className="text-slate-400 font-mono text-[9px] block">
-                                    Distância: <span className="text-slate-300 font-semibold">{distanceText}</span>
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Estimated Arrival Time (ETA) */}
-                              <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5">
-                                <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">ETA Estimado:</span>
-                                <span className="text-cyan-400 font-bold font-mono">
-                                  {etaText}
-                                </span>
-                              </div>
-                            </>
-                          )}
-
-                          {/* Live Speed and Heading */}
-                          <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5 font-mono text-[9px] text-slate-500">
-                            <span>Velocidade: <span className="text-emerald-400 font-bold">{d.speed} KM/H</span></span>
-                            <span>Projeção: <span className="text-slate-300">{d.heading}°</span></span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Bottom Telemetry readouts block inside telemetry grid map */}
-              <div className="bg-slate-900/40 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-left shrink-0 select-none pointer-events-none">
-                <div className="flex gap-4">
-                  <div className="text-slate-500 text-[9px] uppercase tracking-wider font-mono">
-                    Frotistas Monitorados: 
-                    <span className="text-slate-300 font-black font-sans ml-1 text-[10px]/none">
-                      {driversWithTelemetry.length}
-                    </span>
-                  </div>
-                  <div className="text-slate-500 text-[9px] uppercase tracking-wider font-mono">
-                    Rotas Ativas: 
-                    <span className="text-slate-300 font-black font-sans ml-1 text-[10px]/none">
-                      {rotas.filter(r => r.status === 'active').length}
-                    </span>
-                  </div>
-                </div>
-                
-                <div className="text-[9px] text-slate-500 font-mono flex items-center gap-1 truncate max-w-[200px] lg:max-w-none">
-                  {activeDriverSelected ? (
-                    <span className="text-indigo-400 animate-pulse truncate font-semibold">
-                      FOCADO: {activeDriverSelected.name} ({activeDriverSelected.plate}) • {activeDriverSelected.speed} km/h
-                    </span>
-                  ) : (
-                    <span>Selecione um frotista ao lado para ancorar telemetria</span>
-                  )}
-                </div>
-              </div>
-
-            </div>
+            {/* Isolated and Memoized 2D Telemetry Map */}
+            <TelemetryMap
+              filteredDrivers={filteredDrivers}
+              selectedDriverId={selectedDriverId}
+              hoveredDriverId={hoveredDriverId}
+              selectedRegionFilter={selectedRegionFilter}
+              setSelectedDriverId={setSelectedDriverId}
+              setHoveredDriverId={setHoveredDriverId}
+              activeRouteCount={rotas.filter(r => r.status === 'active').length}
+            />
           </motion.div>
         )}
       </AnimatePresence>
     </div>
   );
 }
+
+interface TelemetryMapProps {
+  filteredDrivers: any[];
+  selectedDriverId: string | null;
+  hoveredDriverId: string | null;
+  selectedRegionFilter: string;
+  setSelectedDriverId: (id: string | null) => void;
+  setHoveredDriverId: (id: string | null) => void;
+  activeRouteCount: number;
+}
+
+const TelemetryMap = React.memo(function TelemetryMap({
+  filteredDrivers,
+  selectedDriverId,
+  hoveredDriverId,
+  selectedRegionFilter,
+  setSelectedDriverId,
+  setHoveredDriverId,
+  activeRouteCount,
+}: TelemetryMapProps) {
+  const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+    const R = 6371e3; // metres
+    const phi1 = (lat1 * Math.PI) / 180;
+    const phi2 = (lat2 * Math.PI) / 180;
+    const deltaPhi = ((lat2 - lat1) * Math.PI) / 180;
+    const deltaLambda = ((lng2 - lng1) * Math.PI) / 180;
+
+    const a = Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+              Math.cos(phi1) * Math.cos(phi2) *
+              Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+    return R * c; // in meters
+  };
+
+  const mapBounds = useMemo(() => {
+    const basicDefaultBounds = {
+      minLat: -20.5,
+      maxLat: -18.5,
+      minLng: -44.5,
+      maxLng: -40.0
+    };
+
+    if (filteredDrivers.length === 0) {
+      return basicDefaultBounds;
+    }
+
+    const boundsPoints = [
+      ...filteredDrivers.map(d => ({ lat: d.lat, lng: d.lng })),
+      { lat: -18.845, lng: -41.945 }, // CD Governador Valadares
+      { lat: -19.932, lng: -43.942 }  // CD Belo Horizonte
+    ];
+
+    let minLat = Math.min(...boundsPoints.map(p => p.lat));
+    let maxLat = Math.max(...boundsPoints.map(p => p.lat));
+    let minLng = Math.min(...boundsPoints.map(p => p.lng));
+    let maxLng = Math.max(...boundsPoints.map(p => p.lng));
+
+    const latSpan = maxLat - minLat;
+    const lngSpan = maxLng - minLng;
+    const paddingMultiplier = 0.25;
+
+    return {
+      minLat: minLat - Math.max(latSpan * paddingMultiplier, 0.15),
+      maxLat: maxLat + Math.max(latSpan * paddingMultiplier, 0.15),
+      minLng: minLng - Math.max(lngSpan * paddingMultiplier, 0.15),
+      maxLng: maxLng + Math.max(lngSpan * paddingMultiplier, 0.15)
+    };
+  }, [filteredDrivers]);
+
+  const projectCoordinates = (lat: number, lng: number) => {
+    const latSpan = mapBounds.maxLat - mapBounds.minLat;
+    const lngSpan = mapBounds.maxLng - mapBounds.minLng;
+
+    const xPercent = ((lng - mapBounds.minLng) / (lngSpan || 1)) * 100;
+    const yPercent = 100 - (((lat - mapBounds.minLat) / (latSpan || 1)) * 100);
+
+    return {
+      x: `${Math.max(4, Math.min(96, xPercent))}%`,
+      y: `${Math.max(4, Math.min(92, yPercent))}%`
+    };
+  };
+
+  const activeDriverSelected = useMemo(() => {
+    return filteredDrivers.find(d => d.driverId === selectedDriverId) || null;
+  }, [filteredDrivers, selectedDriverId]);
+
+  return (
+    <div className="flex-1 bg-slate-950 relative overflow-hidden flex flex-col justify-between">
+      
+      {/* Alert Overlap indicating Fallback Mode */}
+      <div className="absolute top-2.5 left-3 z-10 pointer-events-none select-none max-w-[280px] lg:max-w-md">
+        <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-800 text-amber-400 text-[9px] uppercase font-mono px-2.5 py-1 rounded-full shadow-lg backdrop-blur-xs">
+          <Signal className="w-3 h-3 animate-pulse text-amber-400" />
+          <span>Espaço de Coordenadas de Contingência local</span>
+        </div>
+      </div>
+
+      <div className="absolute top-2.5 right-3 z-10 pointer-events-none select-none">
+        <span className="p-0.5 px-1.5 bg-slate-900/90 border border-slate-800 text-slate-400 text-[8px] uppercase tracking-widest font-mono rounded-md">
+          GRID SCALE: LINEAR PROJECTION
+        </span>
+      </div>
+
+      {/* Central Map Workspace container with Grid Canvas representation */}
+      <div className="flex-1 w-full h-full relative cursor-crosshair">
+        
+        {/* Background Tech Mesh lines */}
+        <div className="absolute inset-0 select-none opacity-[0.22] pointer-events-none">
+          <div className="w-full h-full bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:28px_28px]"></div>
+          {/* Concentric rings from center */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border border-dashed border-slate-800 rounded-full"></div>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[440px] h-[440px] border border-dashed border-slate-800/60 rounded-full"></div>
+        </div>
+
+        {/* Plot: Distribution Centers (CD Reference points) */}
+        {/* CD 1: Governador Valadares */}
+        {(selectedRegionFilter === 'all' || selectedRegionFilter === 'GV1') && (
+          <div 
+            id="cd-point-gv"
+            style={{
+              left: projectCoordinates(-18.845, -41.945).x,
+              top: projectCoordinates(-18.845, -41.945).y
+            }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 z-5 group cursor-help transition-all"
+          >
+            <div className="w-3 h-3 bg-blue-500 rounded-full border border-white flex items-center justify-center shadow-lg relative">
+              <div className="absolute -inset-2 bg-blue-500 animate-ping rounded-full opacity-15"></div>
+            </div>
+            {/* Hover label for CD */}
+            <div className="absolute left-4 -top-3 bg-slate-900 border border-slate-800 rounded-md p-1.5 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 shadow-xl">
+              <span className="text-[10px] font-black text-blue-400 block font-mono">CD GOVERNADOR VALADARES</span>
+              <span className="text-[9px] text-slate-300 block">Sede Operacional Regional</span>
+            </div>
+          </div>
+        )}
+
+        {/* CD 2: Belo Horizonte */}
+        {(selectedRegionFilter === 'all' || selectedRegionFilter === 'ES/MG') && (
+          <div 
+            id="cd-point-bh"
+            style={{
+              left: projectCoordinates(-19.932, -43.942).x,
+              top: projectCoordinates(-19.932, -43.942).y
+            }}
+            className="absolute -translate-x-1/2 -translate-y-1/2 z-5 group cursor-help transition-all"
+          >
+            <div className="w-3 h-3 bg-indigo-500 rounded-full border border-white flex items-center justify-center shadow-lg relative">
+              <div className="absolute -inset-2 bg-indigo-500 animate-ping rounded-full opacity-15"></div>
+            </div>
+            {/* Hover info for CD */}
+            <div className="absolute left-4 -top-3 bg-slate-900 border border-slate-800 rounded-md p-1.5 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 shadow-xl">
+              <span className="text-[10px] font-black text-indigo-400 block font-mono">CD BELO HORIZONTE</span>
+              <span className="text-[9px] text-slate-300 block">Sede Região Central & ES/MG</span>
+            </div>
+          </div>
+        )}
+
+        {/* Render Driver vehicle coordinates markers */}
+        {filteredDrivers.map(d => {
+          const isSelected = selectedDriverId === d.driverId;
+          const isHovered = hoveredDriverId === d.driverId;
+          const coords = projectCoordinates(d.lat, d.lng);
+          const angle = d.heading || 0;
+
+          const activeRoute = d.activeRoute;
+          const stops = activeRoute?.stops || [];
+          const currentStopIdx = activeRoute?.currentStopIndex ?? 0;
+          const currentStop = stops[currentStopIdx];
+
+          let currentStatusText = "Sem Rota Ativa";
+          let etaText = "N/A";
+          let nextStopText = "Nenhum";
+          let distanceText = "N/A";
+
+          if (activeRoute) {
+            if (d.speed > 0) {
+              currentStatusText = "Em Deslocamento";
+            } else {
+              currentStatusText = "Parado / Em Operação";
+            }
+
+            if (currentStop) {
+              nextStopText = currentStop.clientName;
+              const distMeters = getDistanceInMeters(d.lat, d.lng, currentStop.lat, currentStop.lng);
+              
+              if (distMeters < 1000) {
+                distanceText = `${Math.round(distMeters)} metros`;
+              } else {
+                distanceText = `${(distMeters / 1000).toFixed(1)} km`;
+              }
+
+              // Estimate minutes
+              const speedKmh = d.speed > 0 ? d.speed : 30; // fallback to 30km/h if static
+              const speedMps = (speedKmh * 1000) / 3600;
+              const timeSeconds = distMeters / speedMps;
+              const timeMinutes = Math.max(1, Math.ceil(timeSeconds / 60));
+
+              const etaDate = new Date();
+              etaDate.setMinutes(etaDate.getMinutes() + timeMinutes);
+              
+              const formattedTime = etaDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+              etaText = `${formattedTime} (em ~${timeMinutes} min)`;
+            }
+          } else {
+            currentStatusText = d.speed > 0 ? "Em Trânsito" : "Disponível (Pátio)";
+          }
+
+          return (
+            <div
+              id={`marker-${d.driverId}`}
+              key={d.driverId}
+              style={{
+                left: coords.x,
+                top: coords.y,
+              }}
+              onMouseEnter={() => setHoveredDriverId(d.driverId)}
+              onMouseLeave={() => setHoveredDriverId(null)}
+              onClick={() => setSelectedDriverId(isSelected ? null : d.driverId)}
+              className={`absolute -translate-x-1/2 -translate-y-1/2 z-10 cursor-pointer transition-all ${
+                isSelected ? "z-30 scale-110" : "hover:scale-105"
+              }`}
+            >
+              {/* Interactive pulsed ring around vehicle based on selection state */}
+              <div className={`absolute -inset-3.5 rounded-full transition-all duration-300 ${
+                isSelected 
+                  ? "bg-indigo-500/25 border border-indigo-400 animate-ping" 
+                  : isHovered 
+                  ? "bg-slate-200/10 border border-slate-700/50" 
+                  : "bg-transparent border border-transparent"
+              }`}></div>
+
+              {/* Direction pin pointer */}
+              <div className={`p-2 rounded-xl border flex items-center justify-center relative shadow-xl transition-colors ${
+                isSelected 
+                  ? "bg-indigo-600 text-white border-white" 
+                  : isHovered 
+                  ? "bg-indigo-500 text-white border-indigo-400" 
+                  : "bg-slate-900 text-slate-200 border-slate-800 hover:border-indigo-400"
+              }`}>
+                
+                {/* Heading arrow representing active displacement heading direction */}
+                <div 
+                  style={{ transform: `rotate(${angle}deg)` }}
+                  className="absolute -top-1.5 -right-1.5 bg-slate-900 border border-slate-700 text-emerald-400 p-0.5 rounded-full"
+                >
+                  <Navigation className="w-2 h-2 fill-current" />
+                </div>
+
+                <Truck className="w-3.5 h-3.5" />
+              </div>
+
+              {/* Floating tooltip block above pin */}
+              <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-3.5 bg-slate-950/95 border border-slate-850/90 text-slate-100 rounded-xl p-3 shadow-2xl transition-all duration-300 w-72 whitespace-normal select-none pointer-events-none backdrop-blur-sm ${
+                isSelected || isHovered ? "opacity-100 scale-100 translate-y-0 visible" : "opacity-0 scale-95 translate-y-2 invisible"
+              }`}>
+                {/* Tooltip Arrow */}
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 w-2.5 h-2.5 bg-slate-950 border-r border-b border-slate-850/90 rotate-45"></div>
+
+                {/* Header: Driver Info & Region */}
+                <div className="flex items-start justify-between border-b border-slate-800/60 pb-2 mb-2">
+                  <div className="min-w-0 flex-1">
+                    <span className="text-[11px] font-extrabold text-white block truncate tracking-tight">
+                      {d.name}
+                    </span>
+                    <span className="text-[9px] text-slate-400 block font-mono">
+                      {d.vehicleModel} • {d.plate}
+                    </span>
+                  </div>
+                  <span className="p-0.5 px-1.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-[8px] rounded font-mono font-bold uppercase tracking-wide">
+                    {d.region}
+                  </span>
+                </div>
+
+                {/* Interactive Data Block */}
+                <div className="space-y-1.5 text-[10px]">
+                  {/* Current Status Row */}
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">Status Atual:</span>
+                    <span className={`px-1.5 py-0.5 rounded font-bold text-[9px] font-mono flex items-center gap-1 uppercase ${
+                      activeRoute 
+                        ? d.speed > 0 
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                          : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                        : "bg-slate-800 text-slate-400 border border-slate-700/50"
+                    }`}>
+                      <span className={`w-1 h-1 rounded-full ${
+                        activeRoute ? d.speed > 0 ? "bg-emerald-400 animate-pulse" : "bg-amber-400" : "bg-slate-400"
+                      }`}></span>
+                      {currentStatusText}
+                    </span>
+                  </div>
+
+                  {/* Active Route Row */}
+                  {activeRoute && (
+                    <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5">
+                      <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">Rota Ativa:</span>
+                      <span className="text-indigo-400 font-bold font-mono truncate max-w-[160px]">
+                        {activeRoute.name}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Next Stop Row */}
+                  {activeRoute && currentStop && (
+                    <>
+                      <div className="flex items-start justify-between border-t border-slate-850/50 pt-1.5 gap-2">
+                        <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider shrink-0 mt-0.5">Destino Atual:</span>
+                        <div className="text-right min-w-0 flex-1">
+                          <span className="text-slate-200 font-bold block truncate">
+                            {nextStopText}
+                          </span>
+                          <span className="text-slate-400 font-mono text-[9px] block">
+                            Distância: <span className="text-slate-300 font-semibold">{distanceText}</span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Estimated Arrival Time (ETA) */}
+                      <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5">
+                        <span className="text-slate-500 font-mono text-[9px] uppercase tracking-wider">ETA Estimado:</span>
+                        <span className="text-cyan-400 font-bold font-mono">
+                          {etaText}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Live Speed and Heading */}
+                  <div className="flex items-center justify-between border-t border-slate-850/50 pt-1.5 font-mono text-[9px] text-slate-500">
+                    <span>Velocidade: <span className="text-emerald-400 font-bold">{d.speed} KM/H</span></span>
+                    <span>Projeção: <span className="text-slate-300">{d.heading}°</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Bottom Telemetry readouts block inside telemetry grid map */}
+      <div className="bg-slate-900/40 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-left shrink-0 select-none pointer-events-none">
+        <div className="flex gap-4">
+          <div className="text-slate-500 text-[9px] uppercase tracking-wider font-mono">
+            Frotistas Monitorados: 
+            <span className="text-slate-300 font-black font-sans ml-1 text-[10px]/none">
+              {filteredDrivers.length}
+            </span>
+          </div>
+          <div className="text-slate-500 text-[9px] uppercase tracking-wider font-mono">
+            Rotas Ativas: 
+            <span className="text-slate-300 font-black font-sans ml-1 text-[10px]/none">
+              {activeRouteCount}
+            </span>
+          </div>
+        </div>
+        
+        <div className="text-[9px] text-slate-500 font-mono flex items-center gap-1 truncate max-w-[200px] lg:max-w-none">
+          {activeDriverSelected ? (
+            <span className="text-indigo-400 animate-pulse truncate font-semibold">
+              FOCADO: {activeDriverSelected.name} ({activeDriverSelected.plate}) • {activeDriverSelected.speed} km/h
+            </span>
+          ) : (
+            <span>Selecione um frotista ao lado para ancorar telemetria</span>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}, (prevProps, nextProps) => {
+  if (prevProps.selectedRegionFilter !== nextProps.selectedRegionFilter) return false;
+  if (prevProps.selectedDriverId !== nextProps.selectedDriverId) return false;
+  if (prevProps.hoveredDriverId !== nextProps.hoveredDriverId) return false;
+  if (prevProps.activeRouteCount !== nextProps.activeRouteCount) return false;
+
+  if (prevProps.filteredDrivers.length !== nextProps.filteredDrivers.length) return false;
+  for (let i = 0; i < prevProps.filteredDrivers.length; i++) {
+    const p = prevProps.filteredDrivers[i];
+    const n = nextProps.filteredDrivers[i];
+    if (
+      p.driverId !== n.driverId ||
+      p.lat !== n.lat ||
+      p.lng !== n.lng ||
+      p.heading !== n.heading ||
+      p.speed !== n.speed ||
+      p.activeRouteName !== n.activeRouteName ||
+      p.activeRouteStopsCount !== n.activeRouteStopsCount
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+});
+

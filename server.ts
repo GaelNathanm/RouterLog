@@ -520,6 +520,100 @@ app.post('/api/gemini/suggest-stops', async (req, res) => {
   }
 });
 
+// API endpoint for Gemini route sequence optimization (TSP)
+app.post('/api/gemini/optimize-route', async (req, res) => {
+  try {
+    if (!ai) {
+      return res.status(500).json({
+        error: 'Chave de API GEMINI_API_KEY não configurada no servidor. Por favor, adicione-a em Configurações > Secrets.',
+      });
+    }
+
+    const { stops, originLat, originLng } = req.body;
+    if (!stops || stops.length === 0) {
+      return res.json({ stops: [] });
+    }
+
+    // Prepare a descriptive prompt for Gemini
+    const stopsListSummary = stops.map((s: any, idx: number) => 
+      `- Parada ${idx + 1}: ID: "${s.id}", Cliente: "${s.clientName}", Endereço: "${s.address}", Coordenadas: (${s.lat}, ${s.lng})`
+    ).join('\n');
+
+    const prompt = `
+      Você é um especialista em logística, tráfego e inteligência de rotas.
+      Sua missão é reordenar as paradas (stops) fornecidas para criar a sequência de entrega mais eficiente possível, partindo da coordenada de origem.
+      Minimize a distância total percorrida e evite caminhos em ziguezague ou retornos desnecessários.
+
+      [COORDENADAS DE ORIGEM DO CENTRO DE DISTRIBUIÇÃO]
+      Latitude: ${originLat}
+      Longitude: ${originLng}
+
+      [LISTA DE PARADAS A REORDENAR]
+      ${stopsListSummary}
+
+      Por favor, retorne uma lista contendo exatamente as mesmas paradas fornecidas, porém reordenadas na sequência lógica ideal sugerida por você para as entregas.
+      Não adicione novas paradas e não remova nenhuma parada da lista. Preserve exatamente os dados originais (especialmente os IDs) de cada parada.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: prompt,
+      config: {
+        systemInstruction: 'Você é um assistente de despacho logístico que responde unicamente em formato JSON em conformidade estrita com o esquema fornecido.',
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            stops: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING, description: 'ID original da parada' },
+                  clientName: { type: Type.STRING, description: 'Nome do cliente original' },
+                  address: { type: Type.STRING, description: 'Endereço original' },
+                  lat: { type: Type.NUMBER, description: 'Latitude original' },
+                  lng: { type: Type.NUMBER, description: 'Longitude original' }
+                },
+                required: ['id']
+              }
+            }
+          },
+          required: ['stops']
+        }
+      }
+    });
+
+    const textOutput = response.text || '';
+    const optimizedResult = JSON.parse(textOutput.trim());
+
+    if (optimizedResult.stops && optimizedResult.stops.length > 0) {
+      // Safely map back using original stops to ensure NO fields are lost or modified
+      const reorderedStops = optimizedResult.stops.map((os: any) => {
+        return stops.find((s: any) => s.id === os.id);
+      }).filter(Boolean);
+
+      // If mapping was fully successful, return it
+      if (reorderedStops.length === stops.length) {
+        return res.json({
+          stops: reorderedStops,
+          source: 'Gemini AI Optimizer (Server-Side)'
+        });
+      }
+    }
+
+    // Fallback if schema match is incomplete
+    return res.json({
+      stops: stops, // return original
+      source: 'Gemini Optimizer Fallback'
+    });
+
+  } catch (error: any) {
+    console.error('Erro na otimização de rota com Gemini:', error);
+    return res.status(500).json({ error: error.message || 'Falha na otimização inteligente.' });
+  }
+});
+
 // API endpoint for Google Directions optimizeWaypoints integration
 app.post('/api/google/directions-optimize', async (req, res) => {
   try {

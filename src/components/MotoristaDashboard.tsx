@@ -10,7 +10,8 @@ import {
 import { 
   Pause, Play, Volume2, Mic, Square, Truck, Navigation, CheckCircle, Phone, ArrowRight, Edit, Pencil,
   MessageSquare, Send, Camera, AlertCircle, MapPin, Map, RefreshCw, Plus, Trash2, X, Compass, Info,
-  Signal, AlertTriangle, SlidersHorizontal, Route, Sparkles, Check, Clock, ChevronLeft, ChevronRight
+  Signal, AlertTriangle, SlidersHorizontal, Route, Sparkles, Check, Clock, ChevronLeft, ChevronRight,
+  User, Award, Shield, ChevronUp, ChevronDown
 } from 'lucide-react';
 import InteractiveMap from './InteractiveMap';
 import RouteMap from './RouteMap';
@@ -21,6 +22,8 @@ import {
   AudioPlayer, AudioRecorderButton 
 } from './DashboardUtils';
 import { saveCloudGPSLocation } from '../supabase';
+import { useStopConfirmation } from '../useStopConfirmation';
+import { StopConfirmationModal } from './StopConfirmationModal';
 
 // ==========================================
 // 3. MOTORISTA VIEW
@@ -38,6 +41,7 @@ interface MotoristaProps {
   onPostMessage: (text: string, audioUrl?: string) => void;
   onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
   offlineQueueLength?: number;
+  onUpdateUser?: (updatedUser: RouteUser) => Promise<void> | void;
 }
 
 export const GUARIBA_LOCATIONS = [
@@ -48,176 +52,51 @@ export const GUARIBA_LOCATIONS = [
   { name: 'Mercearia Popular', address: 'Av. JK, 1100 - Vila Isa', lat: -18.882, lng: -41.972 }
 ];
 
-export function MotoristaDashboard({ user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0 }: MotoristaProps) {
-  const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos' | 'ativa'>('nova');
-  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
+export function MotoristaDashboard({ 
+  user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0, onUpdateUser 
+}: MotoristaProps) {
+  const [activeTab, setActiveTab] = useState<'mapa' | 'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos' | 'ativa' | 'perfil'>('mapa');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
-  const [mobileFocus, setMobileFocus] = useState<'actions' | 'map'>('actions');
   
-  // Signature Drawing canvas states for customer verification
-  const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [hasSigned, setHasSigned] = useState(false);
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-  const [capturedCanhoto, setCapturedCanhoto] = useState<string | null>(null);
-  const [capturedLocal, setCapturedLocal] = useState<string | null>(null);
-
-  // Real-world Multi-Photo Confirmation Modal state for clicking any stop map marker
-  const [confirmingStop, setConfirmingStop] = useState<Parada | null>(null);
-  const [confirmPhotos, setConfirmPhotos] = useState<string[]>([]); // array of base64 photo strings
-  const [modalCapturedCanhoto, setModalCapturedCanhoto] = useState<string | null>(null);
-  const [modalCapturedLocal, setModalCapturedLocal] = useState<string | null>(null);
-  
-  const modalSignatureCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [modalIsDrawing, setModalIsDrawing] = useState(false);
-  const [modalHasSigned, setModalHasSigned] = useState(false);
-
-  // Clear digital signature for modal
-  const handleModalClearSignature = () => {
-    const canvas = modalSignatureCanvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        // Draw elegant slate-200 help guideline
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        ctx.moveTo(15, canvas.height - 35);
-        ctx.lineTo(canvas.width - 15, canvas.height - 35);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-    setModalHasSigned(false);
-  };
-
-  const getModalCanvasCoords = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
-    const rect = canvas.getBoundingClientRect();
-    if ('touches' in e) {
-      if (e.touches.length === 0) return { x: 0, y: 0 };
-      const touch = e.touches[0];
-      return {
-        x: touch.clientX - rect.left,
-        y: touch.clientY - rect.top
-      };
-    } else {
-      return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-      };
-    }
-  };
-
-  const handleModalStartDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const canvas = modalSignatureCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const coords = getModalCanvasCoords(e, canvas);
-    ctx.strokeStyle = '#0f172a'; // slate-900 high contrast ink ink
-    ctx.lineWidth = 2.8;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(coords.x, coords.y);
-    setModalIsDrawing(true);
-    setModalHasSigned(true);
-  };
-
-  const handleModalDraw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!modalIsDrawing) return;
-    e.preventDefault();
-    const canvas = modalSignatureCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const coords = getModalCanvasCoords(e, canvas);
-    ctx.lineTo(coords.x, coords.y);
-    ctx.stroke();
-  };
-
-  const handleModalStopDrawing = () => {
-    setModalIsDrawing(false);
-  };
-
-  // Reset/draw guidelines on modal signature canvas when confirmingStop changes and responsive actual dimensions tracking
-  useEffect(() => {
-    const handleResize = () => {
-      const modalCanvas = modalSignatureCanvasRef.current;
-      if (modalCanvas && modalCanvas.parentElement) {
-        modalCanvas.width = modalCanvas.parentElement.clientWidth;
-        modalCanvas.height = modalCanvas.parentElement.clientHeight || 180;
-        
-        // redraw guideline:
-        const ctx = modalCanvas.getContext('2d');
-        if (ctx) {
-          ctx.strokeStyle = '#e2e8f0';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([5, 5]);
-          ctx.beginPath();
-          ctx.moveTo(15, modalCanvas.height - 35);
-          ctx.lineTo(modalCanvas.width - 15, modalCanvas.height - 35);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
-
-      const inlineCanvas = signatureCanvasRef.current;
-      if (inlineCanvas && inlineCanvas.parentElement) {
-        inlineCanvas.width = inlineCanvas.parentElement.clientWidth;
-        inlineCanvas.height = inlineCanvas.parentElement.clientHeight || 180;
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    const timer = setTimeout(handleResize, 300);
-
-    if (confirmingStop) {
-      setTimeout(() => {
-        handleResize();
-        handleModalClearSignature();
-      }, 350);
-    }
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      clearTimeout(timer);
-    };
-  }, [confirmingStop, activeTab]);
-
-  // Handle up to 5 photos additions
-  const handleModalPhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const remainingSlots = 5 - confirmPhotos.length;
-      if (remainingSlots <= 0) {
-        alert('Limite máximo de 5 fotos atingido!');
-        return;
-      }
-      
-      const filesToProcess = Array.from(files).slice(0, remainingSlots) as File[];
-      
-      filesToProcess.forEach(file => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setConfirmPhotos(prev => {
-            if (prev.length >= 5) return prev;
-            return [...prev, reader.result as string];
-          });
-        };
-        reader.readAsDataURL(file);
-      });
-    }
-  };
-
-  const handleRemoveConfirmPhoto = (indexToRemove: number) => {
-    setConfirmPhotos(prev => prev.filter((_, idx) => idx !== indexToRemove));
-  };
+  const {
+    signatureCanvasRef,
+    modalSignatureCanvasRef,
+    isDrawing,
+    hasSigned,
+    setHasSigned,
+    capturedPhoto,
+    setCapturedPhoto,
+    capturedCanhoto,
+    setCapturedCanhoto,
+    capturedLocal,
+    setCapturedLocal,
+    confirmingStop,
+    setConfirmingStop,
+    confirmPhotos,
+    setConfirmPhotos,
+    modalCapturedCanhoto,
+    setModalCapturedCanhoto,
+    modalCapturedLocal,
+    setModalCapturedLocal,
+    modalIsDrawing,
+    modalHasSigned,
+    setModalHasSigned,
+    handleClearSignature,
+    handleModalClearSignature,
+    handleStartDrawing,
+    handleDraw,
+    handleStopDrawing,
+    handleModalStartDrawing,
+    handleModalDraw,
+    handleModalStopDrawing,
+    handlePhotoFileChange,
+    handleCanhotoFileChange,
+    handleLocalFileChange,
+    handleModalCanhotoFileChange,
+    handleModalLocalFileChange,
+    handleModalPhotoFileChange,
+    handleRemoveConfirmPhoto
+  } = useStopConfirmation(activeTab);
 
   // Real-world delivery/collection submission via modal
   const handleConfirmModalDelivery = async () => {
@@ -291,135 +170,6 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
     }
   };
 
-  // Clear digital signature
-  const handleClearSignature = () => {
-    const canvas = signatureCanvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        // Draw elegant slate-200 help guideline
-        ctx.strokeStyle = '#e2e8f0';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([5, 5]);
-        ctx.beginPath();
-        ctx.moveTo(15, canvas.height - 35);
-        ctx.lineTo(canvas.width - 15, canvas.height - 35);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-    setHasSigned(false);
-  };
-
-  // Convert coordinate spaces of click / touch events to relative canvas layout dimensions
-  const getCanvasCoords = (e: React.MouseEvent | React.TouchEvent, canvas: HTMLCanvasElement) => {
-    const rect = canvas.getBoundingClientRect();
-    if ('touches' in e) {
-      if (e.touches.length === 0) return { x: 0, y: 0 };
-      const touch = e.touches[0];
-      return {
-        x: touch.clientX - rect.left,
-        y: touch.clientY - rect.top
-      };
-    } else {
-      return {
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top
-      };
-    }
-  };
-
-  const handleStartDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const canvas = signatureCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const coords = getCanvasCoords(e, canvas);
-    ctx.strokeStyle = '#0f172a'; // slate-900 high contrast ink ink
-    ctx.lineWidth = 2.8;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.beginPath();
-    ctx.moveTo(coords.x, coords.y);
-    setIsDrawing(true);
-    setHasSigned(true);
-  };
-
-  const handleDraw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    e.preventDefault();
-    const canvas = signatureCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const coords = getCanvasCoords(e, canvas);
-    ctx.lineTo(coords.x, coords.y);
-    ctx.stroke();
-  };
-
-  const handleStopDrawing = () => {
-    setIsDrawing(false);
-  };
-
-  const handlePhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setCapturedPhoto(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleCanhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setCapturedCanhoto(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setCapturedLocal(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleModalCanhotoFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setModalCapturedCanhoto(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleModalLocalFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setModalCapturedLocal(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   // Route editing states
   const [mEditingRouteId, setMEditingRouteId] = useState<string | null>(null);
   const [mEditingRouteName, setMEditingRouteName] = useState('');
@@ -428,6 +178,12 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const [mEditClientName, setMEditClientName] = useState('');
   const [mEditClientWhatsApp, setMEditClientWhatsApp] = useState('');
   const [mEditClientAddress, setMEditClientAddress] = useState('');
+  
+  // Route optimization modal states
+  const [optimizingRoute, setOptimizingRoute] = useState<Rota | null>(null);
+  const [tempStops, setTempStops] = useState<Parada[]>([]);
+  const [optimizationStep, setOptimizationStep] = useState<'select' | 'manual'>('select');
+  const [isAutoOptimizingLoading, setIsAutoOptimizingLoading] = useState<boolean>(false);
   
   // Create state for Stop fields inside Nova Rota
   const [routeName, setRouteName] = useState('Super Entrega ' + new Date().toLocaleDateString('pt-BR'));
@@ -451,11 +207,58 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   const [isLoadingAI, setIsLoadingAI] = useState(false);
 
   const region = (user as any).region || 'GV1';
-  const myRoutes = rotas.filter(r => r.driverId === user.id);
-  const myCreatedRoutes = rotas.filter(r => r.driverId === user.id && !r.sentByGerente);
-  const myReceivedRoutes = rotas.filter(r => r.driverId === user.id && r.sentByGerente === true);
-  const myCompletedRoutes = myRoutes.filter(r => r.status === 'completed');
-  const activeRoute = myRoutes.find(r => r.status === 'active') || null;
+  const myRoutes = useMemo(() => rotas.filter(r => r.driverId === user.id), [rotas, user.id]);
+  const myCreatedRoutes = useMemo(() => myRoutes.filter(r => !r.sentByGerente), [myRoutes]);
+  const myReceivedRoutes = useMemo(() => myRoutes.filter(r => r.sentByGerente === true), [myRoutes]);
+  const myCompletedRoutes = useMemo(() => myRoutes.filter(r => r.status === 'completed'), [myRoutes]);
+  const activeRoute = useMemo(() => myRoutes.find(r => r.status === 'active') || null, [myRoutes]);
+
+  // Profile Edit States
+  const [profileName, setProfileName] = useState(user.name || '');
+  const [profilePhone, setProfilePhone] = useState(user.phone || '');
+  const [profileAddress, setProfileAddress] = useState(user.address || '');
+  const [profileCnh, setProfileCnh] = useState((user as any).cnh || '');
+  const [profileCnhCategory, setProfileCnhCategory] = useState((user as any).cnhCategory || '');
+  const [profileCnhExpiration, setProfileCnhExpiration] = useState((user as any).cnhExpiration || '');
+  const [profileVehicleModel, setProfileVehicleModel] = useState((user as any).vehicleModel || '');
+  const [profilePlate, setProfilePlate] = useState((user as any).plate || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  // Synchronize profile states when user changes
+  useEffect(() => {
+    if (user) {
+      setProfileName(user.name || '');
+      setProfilePhone(user.phone || '');
+      setProfileAddress(user.address || '');
+      setProfileCnh((user as any).cnh || '');
+      setProfileCnhCategory((user as any).cnhCategory || '');
+      setProfileCnhExpiration((user as any).cnhExpiration || '');
+      setProfileVehicleModel((user as any).vehicleModel || '');
+      setProfilePlate((user as any).plate || '');
+    }
+  }, [user]);
+
+  // Compute profile statistics
+  const profileStats = useMemo(() => {
+    const logs = performanceLogs.filter(log => log.driverId === user.id);
+    const totalKm = logs.reduce((sum, log) => sum + (log.actualDistanceKm || 0), 0);
+    const totalStopsCompleted = logs.reduce((sum, log) => sum + (log.completedStopsCount || 0), 0);
+    const totalDeviations = logs.reduce((sum, log) => sum + (log.routeDeviations || 0), 0);
+    
+    // Average time per stop in minutes
+    const validTimes = logs.filter(log => log.averageTimePerStopMinutes > 0);
+    const avgTimePerStop = validTimes.length > 0 
+      ? Math.round(validTimes.reduce((sum, log) => sum + log.averageTimePerStopMinutes, 0) / validTimes.length) 
+      : 15;
+
+    return {
+      totalKm: parseFloat(totalKm.toFixed(1)),
+      totalStopsCompleted,
+      totalDeviations,
+      avgTimePerStop,
+      routesCount: myCompletedRoutes.length
+    };
+  }, [performanceLogs, user.id, myCompletedRoutes]);
 
   const [isSharingLocation, setIsSharingLocation] = useState(true);
 
@@ -927,7 +730,7 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
   };
 
   return (
-    <div id="driver-main-panel" className="grid grid-cols-1 lg:grid-cols-12 gap-5 select-none md:select-text">
+    <div id="driver-main-panel" className="flex flex-col gap-5 select-none md:select-text max-w-6xl mx-auto w-full">
       
       {/* Top Bar Connection Status & Driver QuickBar with shadow-md and rounded-2xl */}
       <div className="lg:col-span-12 bg-white border border-slate-200 rounded-2xl p-4 shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1036,211 +839,189 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
         </div>
       )}
 
-      {/* Responsive Focus Toggle for Mobile Displays */}
-      <div className="lg:hidden col-span-1 flex bg-slate-100 p-1 rounded-2xl border border-slate-200 shadow-sm mb-1 select-none w-full gap-1">
+      {/* Responsive Horizontal Tabs Bar */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 bg-slate-100 p-2 rounded-2xl border border-slate-200/40 select-none w-full">
         <button
           type="button"
-          onClick={() => setMobileFocus('actions')}
-          className={`flex-1 py-3 text-xs font-black rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-            mobileFocus === 'actions' ? 'bg-white text-indigo-900 shadow-sm border border-slate-200/40' : 'text-slate-550'
-          }`}
-        >
-          <SlidersHorizontal className="w-4 h-4 text-indigo-600 shrink-0" />
-          Controles e Ações
-        </button>
-        <button
-          type="button"
-          onClick={() => setMobileFocus('map')}
-          className={`flex-1 py-3 text-xs font-black rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer ${
-            mobileFocus === 'map' ? 'bg-white text-indigo-900 shadow-sm border border-slate-200/40' : 'text-slate-550'
+          onClick={() => setActiveTab('mapa')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'mapa' ? 'bg-white text-slate-800 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-805'
           }`}
         >
           <Map className="w-4 h-4 text-emerald-600 shrink-0" />
-          Ver no Mapa
+          Monitor de Mapa
         </button>
-      </div>
-
-      {/* Left Column Container */}
-      <div className={`transition-all duration-300 ${isSidebarOpen ? 'lg:col-span-4' : 'lg:col-span-1'} space-y-4 w-full ${mobileFocus === 'actions' ? 'block' : 'hidden lg:block'}`}>
         
-        {/* If sidebar is CLOSED (collapsed) */}
-        {!isSidebarOpen && (
-          <div className="hidden lg:flex flex-col items-center bg-white border border-slate-200 py-5 px-2 rounded-2xl shadow-md space-y-5 h-full min-h-[500px] w-full">
-            {/* Expand Button */}
-            <button
-              type="button"
-              onClick={() => setIsSidebarOpen(true)}
-              title="Expandir Menu"
-              className="p-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition-all cursor-pointer border border-indigo-150/50 hover:scale-105 active:scale-95"
-            >
-              <ChevronRight className="w-5 h-5 font-black" />
-            </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('nova')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'nova' ? 'bg-white text-indigo-900 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Plus className="w-4 h-4 text-indigo-600 shrink-0" />
+          Planejar Carga
+        </button>
 
-            <div className="w-full border-b border-slate-100"></div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('salvas')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'salvas' ? 'bg-white text-indigo-950 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Route className="w-4 h-4 text-indigo-600 shrink-0" />
+          Minhas Rotas ({myCreatedRoutes.length})
+        </button>
 
-            {/* Icons strip */}
-            <div className="flex flex-col gap-4 w-full items-center">
-              <button
-                onClick={() => { setActiveTab('nova'); setIsSidebarOpen(true); }}
-                title="Nova Rota"
-                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
-                  activeTab === 'nova' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
-                }`}
-              >
-                <Plus className="w-5 h-5" />
-              </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab('rotarec')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'rotarec' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40 animate-pulse' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Truck className="w-4 h-4 text-emerald-600 shrink-0" />
+          REC ({myReceivedRoutes.length})
+        </button>
 
-              <button
-                onClick={() => { setActiveTab('salvas'); setIsSidebarOpen(true); }}
-                title={`Minhas Rotas (${myCreatedRoutes.length})`}
-                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
-                  activeTab === 'salvas' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
-                }`}
-              >
-                <Route className="w-5 h-5" />
-              </button>
-
-              <button
-                onClick={() => { setActiveTab('rotarec'); setIsSidebarOpen(true); }}
-                title={`Rotas Recebidas (${myReceivedRoutes.length})`}
-                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
-                  activeTab === 'rotarec' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
-                }`}
-              >
-                <Truck className="w-5 h-5" />
-              </button>
-
-              <button
-                onClick={() => { setActiveTab('chat'); setIsSidebarOpen(true); }}
-                title="Suporte Operacional"
-                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
-                  activeTab === 'chat' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
-                }`}
-              >
-                <MessageSquare className="w-5 h-5" />
-              </button>
-
-              <button
-                onClick={() => { setActiveTab('resumos'); setIsSidebarOpen(true); }}
-                title={`Resumos (${myCompletedRoutes.length})`}
-                className={`p-3 rounded-xl transition-all flex items-center justify-center cursor-pointer hover:scale-105 active:scale-95 ${
-                  activeTab === 'resumos' ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50 hover:text-slate-700'
-                }`}
-              >
-                <CheckCircle className="w-5 h-5" />
-              </button>
-            </div>
-
-            {activeRoute && (
-              <>
-                <div className="w-full border-b border-slate-100 my-2"></div>
-                <button
-                  onClick={() => { setActiveTab('ativa'); setIsSidebarOpen(true); }}
-                  title="Ver Rota Ativa"
-                  className="p-3 bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-150/50 rounded-xl transition-all flex items-center justify-center cursor-pointer animate-pulse"
-                >
-                  <Truck className="w-5 h-5" />
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* If sidebar is OPEN (expanded) - or on mobile where we always show full content */}
-        {(isSidebarOpen || mobileFocus === 'actions') && (
-          <div className="space-y-4 w-full">
-            {/* Sidebar Header Panel with Collapse Button */}
-            <div className="flex items-center justify-between bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm">
-              <div className="flex items-center gap-2">
-                <SlidersHorizontal className="w-4 h-4 text-indigo-600" />
-                <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Painel de Ações</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSidebarOpen(false)}
-                title="Ocultar Menu"
-                className="hidden lg:flex items-center justify-center p-1.5 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-              >
-                <ChevronLeft className="w-4.5 h-4.5" />
-              </button>
-            </div>
-
-            {activeRoute && (
+        {activeRoute ? (
           <button
             type="button"
             onClick={() => setActiveTab('ativa')}
-            className={`w-full p-4.5 rounded-2xl border flex items-center justify-between gap-3 text-left transition-all cursor-pointer shadow-md select-none ${
-              activeTab === 'ativa'
-                ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-700 shadow-emerald-200/50 scale-[1.01]'
-                : 'bg-emerald-50/70 hover:bg-emerald-100 border-emerald-250/70 text-emerald-950 font-medium'
+            className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+              activeTab === 'ativa' ? 'bg-white text-emerald-955 shadow-sm border border-slate-200/40' : 'text-emerald-700 hover:text-emerald-905 bg-emerald-50/40 border border-emerald-100/30'
             }`}
           >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                activeTab === 'ativa' ? 'bg-white/20 text-white' : 'bg-emerald-600 text-white'
-              }`}>
-                <Truck className={`w-5 h-5 ${activeTab === 'ativa' ? '' : 'animate-bounce'}`} />
-              </div>
-              <div className="min-w-0">
-                <span className="text-[9px] font-bold block opacity-90 uppercase tracking-widest leading-none">Jornada Ativa</span>
-                <strong className="text-xs font-black truncate block mt-1.5 leading-none">Confirmar Assinatura & Foto</strong>
-              </div>
-            </div>
-            <div className="flex items-center gap-1 font-mono text-[9px] bg-emerald-700/30 text-emerald-100 px-2 py-1 rounded-lg shrink-0 border border-emerald-600/30 font-bold">
-               <span>{activeRoute.currentStopIndex + 1}/{activeRoute.stops.length} Parada</span>
-            </div>
+            <Compass className="w-4 h-4 text-emerald-600 shrink-0 animate-spin" style={{ animationDuration: '6s' }} />
+            Jornada Ativa ({activeRoute.currentStopIndex + 1}/{activeRoute.stops.length})
           </button>
+        ) : (
+          <div className="hidden lg:flex items-center justify-center py-3 px-2 rounded-xl text-xs font-black text-slate-350 select-none border border-dashed border-slate-200/60 uppercase tracking-wider">
+            Sem Rota Ativa
+          </div>
         )}
 
-        <div className="grid grid-cols-5 gap-1 bg-slate-100 p-1.5 rounded-2xl border border-slate-200/40">
-          <button
-            onClick={() => setActiveTab('nova')}
-            className={`py-3 px-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1 uppercase tracking-wider ${
-              activeTab === 'nova' ? 'bg-white text-indigo-900 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Plus className="w-3.5 h-3.5 text-indigo-600" />
-            Nova Rota
-          </button>
-          <button
-            onClick={() => setActiveTab('salvas')}
-            className={`py-3 px-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1 uppercase tracking-wider ${
-              activeTab === 'salvas' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Route className="w-3.5 h-3.5 text-indigo-600" />
-            Rotas ({myCreatedRoutes.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('rotarec')}
-            className={`py-3 px-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1 uppercase tracking-wider ${
-              activeTab === 'rotarec' ? 'bg-white text-indigo-950 shadow-sm animate-pulse' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Truck className="w-3.5 h-3.5 text-emerald-600" />
-            REC ({myReceivedRoutes.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('chat')}
-            className={`py-3 px-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1 uppercase tracking-wider ${
-              activeTab === 'chat' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
-            Suporte
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('resumos')}
-            className={`py-3 px-1.5 rounded-xl text-[10px] font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1 uppercase tracking-wider ${
-              activeTab === 'resumos' ? 'bg-white text-indigo-950 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-            Resumos ({myCompletedRoutes.length})
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setActiveTab('chat')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'chat' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <MessageSquare className="w-4 h-4 text-indigo-600 shrink-0" />
+          Suporte
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('resumos')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'resumos' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+          Resumos ({myCompletedRoutes.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('perfil')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'perfil' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <User className="w-4 h-4 text-indigo-600 shrink-0" />
+          Perfil
+        </button>
+      </div>
+
+      {/* Tabs Panels Container */}
+      <div className="w-full space-y-4">
+
+        {/* TAB 0: MONITOR DE MAPA */}
+        {activeTab === 'mapa' && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 flex flex-col min-h-[500px]">
+            {/* Dynamic active trip navigation dashboard overlay */}
+            {activeRoute && (
+              <div className={`rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm transition-all duration-300 ${
+                isSharingLocation 
+                  ? 'bg-emerald-500 text-white animate-pulse' 
+                  : 'bg-slate-800 text-slate-300 animate-none'
+              }`}>
+                <div>
+                  <span className={`text-[10px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
+                    isSharingLocation ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-700 text-slate-400'
+                  }`}>
+                    {isSharingLocation ? 'JORNADA ATIVA' : 'JORNADA PAUSADA'}
+                  </span>
+                  <h3 className="font-bold text-sm mt-1">{activeRoute.name}</h3>
+                  <p className="text-xs opacity-90">
+                    {isSharingLocation 
+                      ? `Seu trajeto está sendo rastreado em tempo real na região ${region}.`
+                      : 'Compartilhamento de GPS temporariamente suspenso pelo condutor.'}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-start sm:self-auto text-xs font-mono">
+                  <div className={`${isSharingLocation ? 'bg-emerald-600/60' : 'bg-slate-700/65'} p-2 rounded border ${isSharingLocation ? 'border-emerald-400/30' : 'border-slate-600/40'}`}>
+                    <span className="block text-[9px] uppercase opacity-85">Próxima entrega:</span>
+                    <strong className="text-sm font-black whitespace-nowrap">
+                      {activeRoute.stops[activeRoute.currentStopIndex]?.clientName || 'Concluída!'}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between select-none">
+              <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">Monitor de Mapa:</span>
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setMapMode('vector')}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
+                    mapMode === 'vector' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Mapa Vetorial
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapMode('google')}
+                  className={`px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
+                    mapMode === 'google' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Google Maps Platform
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 min-h-[450px]">
+              {mapMode === 'vector' ? (
+                <InteractiveMap 
+                  rota={activeRoute} 
+                  driverLocation={activeRoute ? locations[user.id] || null : null}
+                  region={region}
+                  onStopClick={setConfirmingStop}
+                />
+              ) : (
+                <RouteMap 
+                  rotas={myRoutes}
+                  locations={locations}
+                  currentUserRegion={region}
+                  currentUserRole={user.role}
+                  singleRouteMode={activeRoute}
+                  singleDriverLocation={activeRoute ? locations[user.id] || null : null}
+                  onStopClick={setConfirmingStop}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+
 
         {/* TAB 1: NEW ROUTE PLANNING WIZARD */}
         {activeTab === 'nova' && (
@@ -1766,6 +1547,19 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
 
                       <button
                         onClick={() => {
+                          setOptimizingRoute(route);
+                          setTempStops(route.stops);
+                          setOptimizationStep('select');
+                        }}
+                        className="py-1.5 px-3 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 rounded-xl font-bold transition-all hover:border-emerald-300 cursor-pointer text-xs flex items-center gap-1"
+                        title="Otimizar Rota (Automática ou Manual)"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
+                        Otimizar
+                      </button>
+
+                      <button
+                        onClick={() => {
                           if (confirm('Deseja excluir esta rota recebida permanentemente?')) {
                             onDeleteRoute(route.id);
                           }
@@ -1977,6 +1771,277 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
                     </p>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* TAB 5.5: DRIVER PERSONAL PROFILE */}
+            {activeTab === 'perfil' && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-6 text-xs font-sans">
+                {/* Visual Header */}
+                <div className="relative overflow-hidden bg-gradient-to-r from-indigo-900 to-slate-900 rounded-2xl p-5 text-white flex flex-col sm:flex-row items-center gap-4 shadow-sm select-none">
+                  {/* Glowing background shapes */}
+                  <div className="absolute -right-10 -top-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
+                  <div className="absolute -left-10 -bottom-10 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl"></div>
+
+                  <div className="relative shrink-0 w-16 h-16 rounded-full bg-gradient-to-tr from-indigo-500 via-purple-500 to-emerald-500 p-0.5 shadow-md flex items-center justify-center">
+                    <div className="w-full h-full bg-slate-900 rounded-full flex items-center justify-center font-black text-xl tracking-wider text-white">
+                      {profileName ? profileName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() : 'DR'}
+                    </div>
+                    <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-emerald-500 border-2 border-slate-900 flex items-center justify-center">
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
+                    </span>
+                  </div>
+
+                  <div className="text-center sm:text-left flex-1 space-y-1 z-10">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 justify-center sm:justify-start">
+                      <h3 className="font-extrabold text-base text-slate-100">{profileName || 'Motorista'}</h3>
+                      <span className="self-center bg-indigo-500/30 text-indigo-200 border border-indigo-500/50 text-[9px] uppercase font-bold font-mono px-2 py-0.5 rounded-full">
+                        Região: {region}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-mono">{user.email}</p>
+                    <div className="flex items-center gap-2 mt-1 justify-center sm:justify-start text-[10px] text-slate-300">
+                      <span className="flex items-center gap-1 font-mono">
+                        <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                        CNH Cat. {profileCnhCategory || 'B'}
+                      </span>
+                      <span>•</span>
+                      <span className="font-mono">Placa: {profilePlate || 'N/D'}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bento Statistics Grid */}
+                <div className="space-y-2">
+                  <span className="font-extrabold text-slate-700 text-[10px] uppercase font-mono block tracking-wider">
+                    📊 Desempenho & Estatísticas de Jornada
+                  </span>
+                  
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Rotas Atendidas</span>
+                        <Route className="w-3.5 h-3.5 text-indigo-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.routesCount}</span>
+                        <span className="block text-[8px] text-slate-400">Viagens finalizadas</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Quilometragem</span>
+                        <Navigation className="w-3.5 h-3.5 text-indigo-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.totalKm} <span className="text-xs">km</span></span>
+                        <span className="block text-[8px] text-slate-400">Distância real</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Entregas POD</span>
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.totalStopsCompleted}</span>
+                        <span className="block text-[8px] text-slate-400">Assinadas & fotos</span>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
+                      <div className="flex items-center justify-between text-slate-400">
+                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Tempo / Parada</span>
+                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                      </div>
+                      <div className="mt-2">
+                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.avgTimePerStop} <span className="text-xs">min</span></span>
+                        <span className="block text-[8px] text-slate-400">Tempo médio local</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Profile Edit Form */}
+                <form onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!profileName.trim()) {
+                    alert('Por favor, informe seu nome completo.');
+                    return;
+                  }
+                  setIsSavingProfile(true);
+                  try {
+                    if (onUpdateUser) {
+                      const updated: RouteUser = {
+                        ...user,
+                        name: profileName,
+                        phone: profilePhone,
+                        address: profileAddress,
+                        cnh: profileCnh,
+                        cnhCategory: profileCnhCategory,
+                        cnhExpiration: profileCnhExpiration,
+                        vehicleModel: profileVehicleModel,
+                        plate: profilePlate
+                      } as any;
+                      await onUpdateUser(updated);
+                      alert('Perfil profissional atualizado com sucesso no banco de dados!');
+                    } else {
+                      alert('Alterações salvas localmente!');
+                    }
+                  } catch (err: any) {
+                    console.error(err);
+                    alert('Erro ao salvar as informações: ' + (err.message || err));
+                  } finally {
+                    setIsSavingProfile(false);
+                  }
+                }} className="space-y-4">
+                  <span className="font-extrabold text-slate-700 text-[10px] uppercase font-mono block tracking-wider">
+                    📝 Cadastro & Dados do Condutor
+                  </span>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Nome Completo */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Nome Completo</label>
+                      <input
+                        type="text"
+                        value={profileName}
+                        onChange={(e) => setProfileName(e.target.value)}
+                        placeholder="Ex: Alexander Link"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
+                        required
+                      />
+                    </div>
+
+                    {/* Celular / WhatsApp */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">WhatsApp / Telefone</label>
+                      <input
+                        type="text"
+                        value={profilePhone}
+                        onChange={(e) => setProfilePhone(e.target.value)}
+                        placeholder="Ex: (27) 99999-9999"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
+                      />
+                    </div>
+
+                    {/* Endereço Residencial */}
+                    <div className="sm:col-span-2 space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Endereço Residencial</label>
+                      <input
+                        type="text"
+                        value={profileAddress}
+                        onChange={(e) => setProfileAddress(e.target.value)}
+                        placeholder="Rua, número, bairro, cidade"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
+                      />
+                    </div>
+
+                    {/* CNH */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Número de Registro CNH</label>
+                      <input
+                        type="text"
+                        value={profileCnh}
+                        onChange={(e) => setProfileCnh(e.target.value)}
+                        placeholder="Registro CNH"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-mono"
+                      />
+                    </div>
+
+                    {/* CNH Category */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Categoria CNH</label>
+                      <select
+                        value={profileCnhCategory}
+                        onChange={(e) => setProfileCnhCategory(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-semibold font-sans"
+                      >
+                        <option value="">Selecione</option>
+                        <option value="A">A (Moto)</option>
+                        <option value="B">B (Carro)</option>
+                        <option value="C">C (Caminhão Leve)</option>
+                        <option value="D">D (Microônibus/Ônibus)</option>
+                        <option value="E">E (Articulado/Carreta)</option>
+                        <option value="AB">AB (Moto e Carro)</option>
+                        <option value="AC">AC</option>
+                        <option value="AD">AD</option>
+                        <option value="AE">AE</option>
+                      </select>
+                    </div>
+
+                    {/* CNH Expiration */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Vencimento da CNH</label>
+                      <input
+                        type="date"
+                        value={profileCnhExpiration}
+                        onChange={(e) => setProfileCnhExpiration(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-mono"
+                      />
+                    </div>
+
+                    {/* Modelo Veículo */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Modelo do Veículo</label>
+                      <input
+                        type="text"
+                        value={profileVehicleModel}
+                        onChange={(e) => setProfileVehicleModel(e.target.value)}
+                        placeholder="Ex: Fiat Fiorino / Mercedes Accelo"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
+                      />
+                    </div>
+
+                    {/* Placa */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Placa do Veículo</label>
+                      <input
+                        type="text"
+                        value={profilePlate}
+                        onChange={(e) => setProfilePlate(e.target.value)}
+                        placeholder="Ex: ABC-1234 / ABC1D23"
+                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-bold font-mono placeholder:font-sans placeholder:font-normal uppercase"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="pt-3">
+                    <button
+                      type="submit"
+                      disabled={isSavingProfile}
+                      className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-extrabold uppercase rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer tracking-wider text-xs"
+                    >
+                      {isSavingProfile ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Salvando alterações...
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Salvar Dados de Perfil
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+
+                {/* Safety & Guideline Tips */}
+                <div className="bg-emerald-50/20 border border-emerald-100 rounded-2xl p-4 flex gap-3 text-slate-600">
+                  <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0 text-emerald-600">
+                    <Award className="w-4.5 h-4.5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h5 className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wide">Manual de Segurança do Condutor RouteLog</h5>
+                    <p className="text-[10px] leading-relaxed text-slate-500">
+                      Mantenha seu cadastro sempre atualizado. Suas informações de veículo e CNH são visíveis para os gerentes regionais na hora do agendamento, garantindo a conformidade e a segurança operacional das entregas.
+                    </p>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2267,250 +2332,224 @@ export function MotoristaDashboard({ user, rotas, chats, locations, performanceL
             )}
           </div>
         )}
-          </div>
-        )}
-      </div>
-
-      {/* Right Column: GPS Tracking & Vector Live Map */}
-      <div className={`transition-all duration-300 ${isSidebarOpen ? 'lg:col-span-8' : 'lg:col-span-11'} flex flex-col h-[400px] lg:h-full`}>
-        
-        {/* Dynamic active trip navigation dashboard overlay */}
-        {activeRoute && (
-          <div className={`mb-4 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm transition-all duration-300 ${
-            isSharingLocation 
-              ? 'bg-emerald-500 text-white animate-pulse' 
-              : 'bg-slate-800 text-slate-300 animate-none'
-          }`}>
-            <div>
-              <span className={`text-[10px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
-                isSharingLocation ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-700 text-slate-400'
-              }`}>
-                {isSharingLocation ? 'JORNADA ATIVA' : 'JORNADA PAUSADA'}
-              </span>
-              <h3 className="font-bold text-sm mt-1">{activeRoute.name}</h3>
-              <p className="text-xs opacity-90">
-                {isSharingLocation 
-                  ? `Seu trajeto está sendo rastreado em tempo real na região ${region}.`
-                  : 'Compartilhamento de GPS temporariamente suspenso pelo condutor.'}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 self-start sm:self-auto text-xs font-mono">
-              <div className={`${isSharingLocation ? 'bg-emerald-600/60' : 'bg-slate-700/65'} p-2 rounded border ${isSharingLocation ? 'border-emerald-400/30' : 'border-slate-600/40'}`}>
-                <span className="block text-[9px] uppercase opacity-85">Próxima entrega:</span>
-                <strong className="text-sm font-black whitespace-nowrap">
-                  {activeRoute.stops[activeRoute.currentStopIndex]?.clientName || 'Concluída!'}
-                </strong>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between mb-3 select-none">
-          <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">Monitor de Mapa:</span>
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-            <button
-              onClick={() => setMapMode('vector')}
-              className={`px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                mapMode === 'vector' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Mapa Vetorial
-            </button>
-            <button
-              onClick={() => setMapMode('google')}
-              className={`px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                mapMode === 'google' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Google Maps Platform
-            </button>
-          </div>
-        </div>
-
-        <div className="flex-1 min-h-[350px]">
-          {mapMode === 'vector' ? (
-            <InteractiveMap 
-              rota={activeRoute} 
-              driverLocation={activeRoute ? locations[user.id] || null : null}
-              region={region}
-              onStopClick={setConfirmingStop}
-            />
-          ) : (
-            <RouteMap 
-              rotas={myRoutes}
-              locations={locations}
-              currentUserRegion={region}
-              currentUserRole={user.role}
-              singleRouteMode={activeRoute}
-              singleDriverLocation={activeRoute ? locations[user.id] || null : null}
-              onStopClick={setConfirmingStop}
-            />
-          )}
-        </div>
       </div>
 
       {/* RENDER DYNAMIC MULTI-PHOTO DELIVERY CONFIRMATION MODAL */}
       {confirmingStop && (
-        <div id="modal-comprovante-entrega" className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-white border border-slate-200 shadow-2xl rounded-3xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] md:max-h-[95vh] relative animate-scale-up font-sans">
-            {/* Header */}
-            <div className="bg-slate-900 text-white p-5 flex items-center justify-between sticky top-0 z-10">
+        <StopConfirmationModal
+          confirmingStop={confirmingStop}
+          confirmPhotos={confirmPhotos}
+          modalSignatureCanvasRef={modalSignatureCanvasRef}
+          modalHasSigned={modalHasSigned}
+          handleModalClearSignature={handleModalClearSignature}
+          handleModalStartDrawing={handleModalStartDrawing}
+          handleModalDraw={handleModalDraw}
+          handleModalStopDrawing={handleModalStopDrawing}
+          handleModalPhotoFileChange={handleModalPhotoFileChange}
+          handleRemoveConfirmPhoto={handleRemoveConfirmPhoto}
+          handleConfirmModalDelivery={handleConfirmModalDelivery}
+          onClose={() => {
+            setConfirmingStop(null);
+            setConfirmPhotos([]);
+            setModalHasSigned(false);
+          }}
+        />
+      )}
+
+      {/* MODAL DE OTIMIZAÇÃO DE ROTA (AUTO & MANUAL) */}
+      {optimizingRoute && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm select-none font-sans">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[85vh]">
+            
+            {/* Modal Header */}
+            <div className="bg-gradient-to-r from-slate-800 to-indigo-900 text-white px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center border border-indigo-500/30">
-                  <CheckCircle className="w-5 h-5 text-indigo-400" />
-                </div>
+                <Sparkles className="w-5 h-5 text-amber-300 animate-pulse" />
                 <div>
-                  <h3 className="text-sm font-black uppercase tracking-wide">Confirmar Entrega</h3>
-                  <p className="text-[10px] text-slate-400 font-mono tracking-wider">CLIENTE INTEGRADO • REAL-TIME</p>
+                  <h3 className="font-bold text-sm tracking-wide">Otimizar Rota</h3>
+                  <p className="text-[10px] text-slate-300 font-mono mt-0.5">{optimizingRoute.name}</p>
                 </div>
               </div>
               <button 
-                type="button" 
+                type="button"
                 onClick={() => {
-                  setConfirmingStop(null);
-                  setConfirmPhotos([]);
-                  setModalHasSigned(false);
-                }} 
-                className="text-slate-400 hover:text-white transition-all p-2 rounded-lg bg-slate-800 hover:bg-slate-700 cursor-pointer"
+                  setOptimizingRoute(null);
+                  setTempStops([]);
+                  setOptimizationStep('select');
+                }}
+                className="p-1.5 hover:bg-white/10 rounded-lg text-white/80 hover:text-white transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Scrollable Content */}
-            <div className="p-5 overflow-y-auto flex-1 space-y-5">
-              {/* Target Client Metadata Card */}
-              <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-1">
-                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest font-mono block">Destinatário Logístico</span>
-                <strong className="text-slate-800 text-sm block font-extrabold">{confirmingStop.clientName}</strong>
-                <p className="text-slate-500 text-[11px] leading-relaxed">📍 {confirmingStop.address}</p>
-              </div>
+            {/* Modal Content */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-4">
+              {optimizationStep === 'select' ? (
+                <div className="space-y-4">
+                  <p className="text-slate-500 text-[11px] leading-relaxed">
+                    Escolha a forma como você deseja ordenar e otimizar a sequência de entregas para esta rota:
+                  </p>
 
-              {/* Step 1: Canvas Signature */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
-                    🖊️ Colete a Assinatura Digital:
-                  </label>
-                  <button 
-                    type="button" 
-                    onClick={handleModalClearSignature}
-                    className="text-[10px] text-red-600 hover:text-red-700 border border-red-200 hover:bg-red-50 font-bold px-2.5 py-1 rounded-lg transition-all cursor-pointer"
-                  >
-                    Recomeçar / Limpar
-                  </button>
+                  <div className="grid grid-cols-1 gap-3.5 pt-2">
+                    {/* OPTION 1: AUTO */}
+                    <button
+                      type="button"
+                      disabled={isAutoOptimizingLoading}
+                      onClick={async () => {
+                        if (tempStops.length <= 1) {
+                          alert('Necessita de ao menos 2 paradas para realizar a otimização.');
+                          return;
+                        }
+                        setIsAutoOptimizingLoading(true);
+                        try {
+                          const originLat = optimizingRoute.originLat || -18.845;
+                          const originLng = optimizingRoute.originLng || -41.945;
+                          const sorted = await onOptimize(tempStops, originLat, originLng);
+                          
+                          // Save back to db/parent state
+                          onUpdateRoute(optimizingRoute.id, { stops: sorted });
+                          
+                          alert('Rota otimizada com sucesso via Google Directions API (optimizeWaypoints:true)!');
+                          setOptimizingRoute(null);
+                          setTempStops([]);
+                        } catch (err: any) {
+                          alert('Erro na otimização automática: ' + err.message);
+                        } finally {
+                          setIsAutoOptimizingLoading(false);
+                        }
+                      }}
+                      className="group border border-emerald-100 hover:border-emerald-300 bg-emerald-50/20 hover:bg-emerald-50/50 p-4 rounded-xl text-left cursor-pointer transition-all duration-200 active:scale-98 shadow-sm flex gap-3.5 items-start disabled:opacity-50 w-full"
+                    >
+                      <div className="p-2.5 bg-emerald-100 text-emerald-700 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
+                        {isAutoOptimizingLoading ? (
+                          <RefreshCw className="w-5 h-5 animate-spin text-emerald-600" />
+                        ) : (
+                          <Sparkles className="w-5 h-5 text-emerald-600 animate-pulse" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="font-extrabold text-xs text-emerald-900 uppercase tracking-wider">Otimização Automática (Inteligente)</h4>
+                        <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                          Reordena as paradas automaticamente utilizando algoritmos avançados do Google Maps. Encontra o trajeto mais rápido e econômico considerando distância geográfica real.
+                        </p>
+                      </div>
+                    </button>
+
+                    {/* OPTION 2: MANUAL */}
+                    <button
+                      type="button"
+                      disabled={isAutoOptimizingLoading}
+                      onClick={() => {
+                        setOptimizationStep('manual');
+                      }}
+                      className="group border border-indigo-100 hover:border-indigo-300 bg-indigo-50/10 hover:bg-indigo-50/30 p-4 rounded-xl text-left cursor-pointer transition-all duration-200 active:scale-98 shadow-sm flex gap-3.5 items-start w-full"
+                    >
+                      <div className="p-2.5 bg-indigo-100 text-indigo-700 rounded-lg shrink-0 group-hover:scale-105 transition-transform">
+                        <SlidersHorizontal className="w-5 h-5 text-indigo-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="font-extrabold text-xs text-indigo-900 uppercase tracking-wider">Otimização Manual (Sequencial)</h4>
+                        <p className="text-[10px] text-slate-500 mt-1 leading-relaxed">
+                          Defina você mesmo a sequência ideal das paradas. Suba ou desça as entregas na fila de acordo com sua preferência pessoal de motorista ou imprevistos do dia-a-dia.
+                        </p>
+                      </div>
+                    </button>
+                  </div>
                 </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[10px] text-slate-400 uppercase tracking-wider block">Ordene as Paradas ({tempStops.length}):</span>
+                    <button
+                      type="button"
+                      onClick={() => setOptimizationStep('select')}
+                      className="text-[10px] text-indigo-600 font-extrabold uppercase hover:underline cursor-pointer"
+                    >
+                      Voltar ao menu
+                    </button>
+                  </div>
 
-                <div className="relative border border-slate-200 rounded-2xl bg-white overflow-hidden shadow-inner h-[180px] flex flex-col">
-                  <canvas
-                    ref={modalSignatureCanvasRef}
-                    onMouseDown={handleModalStartDrawing}
-                    onMouseMove={handleModalDraw}
-                    onMouseUp={handleModalStopDrawing}
-                    onMouseLeave={handleModalStopDrawing}
-                    onTouchStart={handleModalStartDrawing}
-                    onTouchMove={handleModalDraw}
-                    onTouchEnd={handleModalStopDrawing}
-                    className="w-full h-full cursor-crosshair touch-none bg-slate-50/20"
-                  />
-                  {!modalHasSigned && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-slate-400/80 text-[11px] font-medium uppercase font-sans">
-                      Assine aqui com o dedo ou canetinha digital
-                    </div>
-                  )}
-                </div>
-              </div>
+                  <div className="space-y-2 max-h-[40vh] overflow-y-auto pr-1">
+                    {tempStops.map((st, idx) => (
+                      <div 
+                        key={st.id} 
+                        className="flex items-center justify-between border border-slate-100 bg-slate-50/50 hover:bg-slate-50 p-2.5 rounded-xl gap-2 transition-colors"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 font-black text-[9px] flex items-center justify-center font-mono shrink-0">
+                            {idx + 1}
+                          </span>
+                          <div className="truncate">
+                            <h5 className="font-bold text-[11px] text-slate-800 truncate">{st.clientName}</h5>
+                            <p className="text-[9px] text-slate-400 truncate max-w-[200px]">{st.address}</p>
+                          </div>
+                        </div>
 
-              {/* Step 2: Collection of up to 5 validation photos */}
-              <div className="space-y-3 pt-2 border-t border-slate-100">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
-                    📷 Fotos Comprovantes ({confirmPhotos.length} de 5):
-                  </label>
-                  
-                  {confirmPhotos.length < 5 ? (
-                    <label className="relative flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-[10px] uppercase tracking-wide px-3 py-2 rounded-xl border border-indigo-700 shadow-sm transition-all cursor-pointer hover:scale-[1.02] active:scale-95 select-none animate-pulse">
-                      <Camera className="w-3.5 h-3.5 text-indigo-200" />
-                      Capturar Foto
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        onChange={handleModalPhotoFileChange} 
-                        className="hidden" 
-                        capture="environment" // trigger camera immediately on mobile
-                        multiple
-                      />
-                    </label>
-                  ) : (
-                    <span className="text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-100 font-extrabold px-2 py-1 rounded-lg uppercase">
-                      Limite de Fotos Preenchido ✅
-                    </span>
-                  )}
-                </div>
-
-                {/* Symmetrical grid for previews */}
-                {confirmPhotos.length > 0 ? (
-                  <div className="grid grid-cols-5 gap-2 bg-slate-50 border border-slate-100 p-3 rounded-2xl">
-                    {confirmPhotos.map((photo, pIdx) => (
-                      <div key={pIdx} className="relative aspect-square rounded-xl bg-white border border-slate-200 overflow-hidden shadow-xs group">
-                        <img 
-                          src={photo} 
-                          alt={`Proof ${pIdx + 1}`} 
-                          className="w-full h-full object-cover" 
-                          referrerPolicy="no-referrer"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveConfirmPhoto(pIdx)}
-                          className="absolute inset-0 bg-red-600/70 hover:bg-red-700/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all rounded-xl cursor-pointer"
-                          title="Remover foto do relatório"
-                        >
-                          <Trash2 className="w-4 h-4 text-white" />
-                        </button>
-                        <span className="absolute bottom-1 right-1 text-[8px] font-extrabold font-mono text-slate-900 bg-white/90 border border-slate-200 px-1 rounded">
-                          #{pIdx + 1}
-                        </span>
+                        {/* Reordering Controls */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => {
+                              const updated = [...tempStops];
+                              // swap idx and idx-1
+                              [updated[idx], updated[idx - 1]] = [updated[idx - 1], updated[idx]];
+                              setTempStops(updated);
+                            }}
+                            className="p-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none hover:bg-slate-50 cursor-pointer"
+                            title="Mover para cima"
+                          >
+                            <ChevronUp className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === tempStops.length - 1}
+                            onClick={() => {
+                              const updated = [...tempStops];
+                              // swap idx and idx+1
+                              [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+                              setTempStops(updated);
+                            }}
+                            className="p-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-slate-500 hover:text-slate-800 disabled:opacity-30 disabled:pointer-events-none hover:bg-slate-50 cursor-pointer"
+                            title="Mover para baixo"
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <div className="text-center py-7 border border-dashed border-slate-200 bg-slate-50/50 rounded-2xl text-slate-400 space-y-1.5">
-                    <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center mx-auto text-slate-400">
-                      <Camera className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-bold text-slate-500">Nenhuma foto adicionada ainda</p>
-                      <p className="text-[9px] text-slate-400">É obrigatório anexar no mínimo 1 foto do comprovante fiscal, carga ou estabelecimento.</p>
-                    </div>
+
+                  <div className="pt-3 border-t border-slate-100 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOptimizingRoute(null);
+                        setTempStops([]);
+                        setOptimizationStep('select');
+                      }}
+                      className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-[11px] uppercase tracking-wider text-center cursor-pointer transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateRoute(optimizingRoute.id, { stops: tempStops });
+                        alert('Sequência de rota personalizada salva com sucesso!');
+                        setOptimizingRoute(null);
+                        setTempStops([]);
+                      }}
+                      className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-[11px] uppercase tracking-wider text-center cursor-pointer transition-colors shadow-sm"
+                    >
+                      Confirmar Sequência
+                    </button>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
             </div>
 
-            {/* Sticky Actions Footer */}
-            <div className="bg-slate-50 border-t border-slate-100 p-4 sticky bottom-0 z-10 flex gap-2.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmingStop(null);
-                  setConfirmPhotos([]);
-                  setModalHasSigned(false);
-                }}
-                className="w-1/3 py-3 border border-slate-200 bg-white hover:bg-slate-100 hover:border-slate-300 text-slate-700 font-bold rounded-2xl text-xs uppercase cursor-pointer select-none transition-all active:scale-95"
-              >
-                Voltar ao Mapa
-              </button>
-
-              <button
-                type="button"
-                onClick={handleConfirmModalDelivery}
-                className="w-2/3 py-3 bg-indigo-600 hover:bg-indigo-700 border border-indigo-700 text-white font-extrabold rounded-2xl text-xs uppercase tracking-wider shadow-md hover:shadow-indigo-100 shadow-indigo-50/50 flex items-center justify-center gap-1.5 transition-all select-none active:scale-95 cursor-pointer"
-              >
-                <CheckCircle className="w-4 h-4 text-white" />
-                Registrar Comprovantes
-              </button>
-            </div>
           </div>
         </div>
       )}

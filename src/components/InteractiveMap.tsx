@@ -14,7 +14,7 @@ interface MapProps {
   onStopClick?: (stop: Parada) => void;
 }
 
-export default function InteractiveMap({ rota, driverLocation, region, onStopClick }: MapProps) {
+function InteractiveMap({ rota, driverLocation, region, onStopClick }: MapProps) {
   
   // GV1 Region Default Bounding Box
   const boundingDefaults: Record<string, { minLat: number; maxLat: number; minLng: number; maxLng: number }> = {
@@ -279,3 +279,48 @@ export default function InteractiveMap({ rota, driverLocation, region, onStopCli
     </div>
   );
 }
+
+export default React.memo(InteractiveMap, (prevProps, nextProps) => {
+  if (prevProps.region !== nextProps.region) return false;
+
+  const prevLoc = prevProps.driverLocation;
+  const nextLoc = nextProps.driverLocation;
+  if (!prevLoc !== !nextLoc) return false;
+  if (prevLoc && nextLoc) {
+    if (
+      prevLoc.lat !== nextLoc.lat ||
+      prevLoc.lng !== nextLoc.lng ||
+      prevLoc.heading !== nextLoc.heading ||
+      prevLoc.speed !== nextLoc.speed
+    ) {
+      return false; // main coordinates changed
+    }
+  }
+
+  const prevRota = prevProps.rota;
+  const nextRota = nextProps.rota;
+  if (!prevRota !== !nextRota) return false;
+  if (prevRota && nextRota) {
+    if (prevRota.id !== nextRota.id) return false;
+    if (prevRota.status !== nextRota.status) return false;
+    if (prevRota.currentStopIndex !== nextRota.currentStopIndex) return false;
+    if (prevRota.originLat !== nextRota.originLat || prevRota.originLng !== nextRota.originLng) return false;
+    
+    if (prevRota.stops.length !== nextRota.stops.length) return false;
+    for (let i = 0; i < prevRota.stops.length; i++) {
+      const pS = prevRota.stops[i];
+      const nS = nextRota.stops[i];
+      if (
+        pS.id !== nS.id ||
+        pS.status !== nS.status ||
+        pS.lat !== nS.lat ||
+        pS.lng !== nS.lng
+      ) {
+        return false; // stops or coordinates changed
+      }
+    }
+  }
+
+  return true; // no changes of coordinates or status, skip render!
+});
+

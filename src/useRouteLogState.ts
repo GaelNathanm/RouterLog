@@ -1388,7 +1388,8 @@ export function useRouteLogState() {
   const handleOptimizeRoute = async (stopsList: Parada[], originLat: number, originLng: number): Promise<Parada[]> => {
     if (stopsList.length <= 1) return stopsList;
     try {
-      const response = await fetch('/api/google/directions-optimize', {
+      // 1. Try Gemini AI optimization first (Server-Side)
+      const response = await fetch('/api/gemini/optimize-route', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -1400,39 +1401,61 @@ export function useRouteLogState() {
         })
       });
       if (!response.ok) {
-        throw new Error('API optimization failed');
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Gemini optimization failed');
       }
       const data = await response.json();
       return data.stops;
-    } catch (err) {
-      console.warn('Backend optimize failed, utilizing local fallback:', err);
-      // Fallback: nearest-neighbor layout
-      const sorted: Parada[] = [];
-      const remaining = [...stopsList];
-      let currLat = originLat;
-      let currLng = originLng;
+    } catch (err: any) {
+      console.warn('Gemini optimization failed, falling back to Google Directions API / TSP:', err);
+      try {
+        // 2. Fallback to Google Directions API
+        const response = await fetch('/api/google/directions-optimize', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            stops: stopsList,
+            originLat,
+            originLng
+          })
+        });
+        if (!response.ok) {
+          throw new Error('Google Directions API optimization failed');
+        }
+        const data = await response.json();
+        return data.stops;
+      } catch (fallbackErr) {
+        console.warn('Google optimization failed, utilizing local fallback:', fallbackErr);
+        // 3. Last resort fallback: local nearest-neighbor TSP
+        const sorted: Parada[] = [];
+        const remaining = [...stopsList];
+        let currLat = originLat;
+        let currLng = originLng;
 
-      while (remaining.length > 0) {
-        let nearestIdx = 0;
-        let minDistance = Infinity;
+        while (remaining.length > 0) {
+          let nearestIdx = 0;
+          let minDistance = Infinity;
 
-        for (let i = 0; i < remaining.length; i++) {
-          const dLat = remaining[i].lat - currLat;
-          const dLng = remaining[i].lng - currLng;
-          const d = dLat * dLat + dLng * dLng;
-          if (d < minDistance) {
-            minDistance = d;
-            nearestIdx = i;
+          for (let i = 0; i < remaining.length; i++) {
+            const dLat = remaining[i].lat - currLat;
+            const dLng = remaining[i].lng - currLng;
+            const d = dLat * dLat + dLng * dLng;
+            if (d < minDistance) {
+              minDistance = d;
+              nearestIdx = i;
+            }
           }
+
+          const nextStop = remaining.splice(nearestIdx, 1)[0];
+          sorted.push(nextStop);
+          currLat = nextStop.lat;
+          currLng = nextStop.lng;
         }
 
-        const nextStop = remaining.splice(nearestIdx, 1)[0];
-        sorted.push(nextStop);
-        currLat = nextStop.lat;
-        currLng = nextStop.lng;
+        return sorted;
       }
-
-      return sorted;
     }
   };
 
