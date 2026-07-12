@@ -11,17 +11,18 @@ import {
   Pause, Play, Volume2, Mic, Square, Truck, Navigation, CheckCircle, Phone, ArrowRight, Edit, Pencil,
   MessageSquare, Send, Camera, AlertCircle, MapPin, Map, RefreshCw, Plus, Trash2, X, Compass, Info,
   Signal, AlertTriangle, SlidersHorizontal, Route, Sparkles, Check, Clock, ChevronLeft, ChevronRight,
-  User, Award, Shield, ChevronUp, ChevronDown
+  User, Award, Shield, ChevronUp, ChevronDown, Loader2
 } from 'lucide-react';
 import InteractiveMap from './InteractiveMap';
 import RouteMap from './RouteMap';
-import { RouteTimeComparisonChart } from './RouteTimeComparisonChart';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   AudioPlayer, AudioRecorderButton 
 } from './DashboardUtils';
-import { saveCloudGPSLocation } from '../firebase';
+import { db, saveCloudGPSLocation } from '../firebase';
+import { 
+  collection, query, where, onSnapshot, doc, updateDoc, setDoc 
+} from 'firebase/firestore';
 import { useStopConfirmation } from '../useStopConfirmation';
 import { StopConfirmationModal } from './StopConfirmationModal';
 
@@ -55,7 +56,7 @@ export const GUARIBA_LOCATIONS = [
 export function MotoristaDashboard({ 
   user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0, onUpdateUser 
 }: MotoristaProps) {
-  const [activeTab, setActiveTab] = useState<'mapa' | 'nova' | 'salvas' | 'chat' | 'rotarec' | 'resumos' | 'ativa' | 'perfil'>('mapa');
+  const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'rotarec'>('salvas');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
   
   const {
@@ -152,6 +153,7 @@ export function MotoristaDashboard({
     const updatedStatus = isRouteFinished ? 'completed' : 'active';
 
     try {
+      await handleCompleteStop(activeRoute.id, confirmingStop.id, signatureBase64, confirmPhotos[0]);
       await onUpdateRoute(activeRoute.id, {
         stops: updatedStops,
         currentStopIndex: nextIndex,
@@ -191,8 +193,8 @@ export function MotoristaDashboard({
   const [originLat, setOriginLat] = useState(-20.302534);
   const [originLng, setOriginLng] = useState(-40.401630);
 
-  // Stop Form State
-  const [stops, setStops] = useState<Parada[]>([]);
+  // For manual route creation flow inside "Nova Rota" tab
+  const [creationStops, setCreationStops] = useState<Parada[]>([]);
   const [clientName, setClientName] = useState('');
   const [clientWhatsApp, setClientWhatsApp] = useState('');
   const [clientAddress, setClientAddress] = useState('');
@@ -206,12 +208,121 @@ export function MotoristaDashboard({
   const [connectionStatus, setConnectionStatus] = useState<'stable' | 'unstable'>('stable');
   const [isLoadingAI, setIsLoadingAI] = useState(false);
 
+  // Firestore Real-Time Subscriptions
+  const [firestoreRoutes, setFirestoreRoutes] = useState<Rota[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stops, setStops] = useState<Parada[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    const driverUid = user.id || (user as any).uid;
+    if (!driverUid) return;
+
+    // Real-time listener for routes where driverId == user.uid and is active/scheduled today
+    const q = query(
+      collection(db, 'rotas'),
+      where('driverId', '==', driverUid)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list: Rota[] = [];
+      snapshot.forEach((doc) => {
+        list.push({ id: doc.id, ...doc.data() } as Rota);
+      });
+
+      setFirestoreRoutes(list);
+
+      // Filtering in real-time for routes with status "em_andamento" (active) or "agendada" (draft)
+      const currentActiveRoute = list.find(r => 
+        (r.status as string) === 'active' || 
+        (r.status as string) === 'em_andamento' || 
+        (r.status as string) === 'draft' || 
+        (r.status as string) === 'agendada'
+      );
+
+      if (currentActiveRoute) {
+        setStops(currentActiveRoute.stops || []);
+      } else {
+        setStops([]);
+      }
+      setLoading(false);
+    }, (error) => {
+      console.error("[Firestore onSnapshot] Error loading routes:", error);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Implement state modifications in the Firestore directly
+  const handleCompleteStop = async (routeId: string, stopId: string, signatureUrl?: string, photoUrl?: string) => {
+    try {
+      const routeRef = doc(db, 'rotas', routeId);
+      const targetRoute = firestoreRoutes.find(r => r.id === routeId) || myRoutes.find(r => r.id === routeId);
+      if (!targetRoute) return;
+
+      const updatedStops = targetRoute.stops.map(s => {
+        if (s.id === stopId) {
+          return {
+            ...s,
+            status: 'completed' as const,
+            signatureUrl: signatureUrl || s.signatureUrl,
+            photoUrl: photoUrl || s.photoUrl,
+            completedAt: new Date().toISOString()
+          };
+        }
+        return s;
+      });
+
+      let nextIndex = updatedStops.findIndex(s => s.status !== 'completed');
+      if (nextIndex === -1) {
+        nextIndex = updatedStops.length;
+      }
+      const isRouteFinished = nextIndex >= updatedStops.length;
+      const updatedStatus = isRouteFinished ? 'completed' : 'active';
+
+      await updateDoc(routeRef, {
+        stops: updatedStops,
+        currentStopIndex: nextIndex,
+        status: updatedStatus
+      });
+    } catch (err) {
+      console.error('[handleCompleteStop] Firestore write error:', err);
+    }
+  };
+
+  const setIsRouteActive = async (routeId: string, isActive: boolean) => {
+    try {
+      const routeRef = doc(db, 'rotas', routeId);
+      await updateDoc(routeRef, {
+        status: isActive ? 'active' : 'draft'
+      });
+    } catch (err) {
+      console.error('[setIsRouteActive] Firestore write error:', err);
+    }
+  };
+
   const region = (user as any).region || 'GV1';
-  const myRoutes = useMemo(() => rotas.filter(r => r.driverId === user.id), [rotas, user.id]);
+  
+  // Use real-time firestoreRoutes if loaded, otherwise fallback to rotas prop
+  const myRoutes = useMemo(() => {
+    const source = firestoreRoutes.length > 0 ? firestoreRoutes : rotas;
+    const driverUid = user.id || (user as any).uid;
+    return source.filter(r => r.driverId === driverUid);
+  }, [firestoreRoutes, rotas, user]);
+
   const myCreatedRoutes = useMemo(() => myRoutes.filter(r => !r.sentByGerente), [myRoutes]);
   const myReceivedRoutes = useMemo(() => myRoutes.filter(r => r.sentByGerente === true), [myRoutes]);
   const myCompletedRoutes = useMemo(() => myRoutes.filter(r => r.status === 'completed'), [myRoutes]);
-  const activeRoute = useMemo(() => myRoutes.find(r => r.status === 'active') || null, [myRoutes]);
+  
+  const activeRoute = useMemo(() => {
+    const found = myRoutes.find(r => r.status === 'active' || r.status === 'em_andamento') || 
+                  myRoutes.find(r => r.status === 'draft' || r.status === 'agendada') || null;
+    if (found) {
+      return { ...found, stops };
+    }
+    return null;
+  }, [myRoutes, stops]);
 
   // Profile Edit States
   const [profileName, setProfileName] = useState(user.name || '');
@@ -261,22 +372,6 @@ export function MotoristaDashboard({
   }, [performanceLogs, user.id, myCompletedRoutes]);
 
   const [isSharingLocation, setIsSharingLocation] = useState(true);
-
-  // Synchronize dynamic redirect tab
-  useEffect(() => {
-    if (activeRoute) {
-      setActiveTab('ativa');
-    }
-  }, [activeRoute?.id]);
-
-  // Guidelines reset on stop transition
-  useEffect(() => {
-    if (activeTab === 'ativa') {
-      setTimeout(() => {
-        handleClearSignature();
-      }, 150);
-    }
-  }, [activeTab, activeRoute?.currentStopIndex]);
 
   // Delivery confirmation action
   const handleConfirmDelivery = async (routeId: string, stopId: string) => {
@@ -368,6 +463,7 @@ export function MotoristaDashboard({
         const updatedStatus = isRouteFinished ? 'completed' : 'active';
 
         try {
+          await handleCompleteStop(routeId, stopId, signatureBase64, payload.photoUrl);
           await onUpdateRoute(routeId, {
             stops: updatedStops,
             currentStopIndex: nextIndex,
@@ -406,15 +502,19 @@ export function MotoristaDashboard({
           const speed = position.coords.speed !== null ? Math.round(position.coords.speed * 3.6) : (45 + Math.floor(Math.random() * 10)); // convert to km/h or simulated
           const heading = position.coords.heading !== null ? position.coords.heading : Math.floor(Math.random() * 360);
           
-          const nextLoc: GPSLocation = {
+          const nextLoc = {
             driverId: user.id,
             lat,
             lng,
             heading,
             speed,
             lastUpdated: new Date().toISOString(),
-            isSharing: true
-          };
+            isSharing: true,
+            // Direct instruction specific fields
+            latitude: lat,
+            longitude: lng,
+            updatedAt: new Date().toISOString()
+          } as any;
           
           try {
             await saveCloudGPSLocation(nextLoc);
@@ -471,7 +571,7 @@ export function MotoristaDashboard({
           status: 'pending' as const
         }));
 
-        setStops(loadedStops);
+        setCreationStops(loadedStops);
         alert(`O Gemini AI analisou seu histórico de ${myRoutes.length} rotas anteriores e encontrou padrões! ${loadedStops.length} paradas recorrentes foram sugeridas com sucesso.`);
       }
     } catch (err: any) {
@@ -602,7 +702,7 @@ export function MotoristaDashboard({
       status: 'pending'
     };
 
-    setStops([...stops, newStop]);
+    setCreationStops([...creationStops, newStop]);
     
     // reset form
     setClientName('');
@@ -691,10 +791,10 @@ export function MotoristaDashboard({
   };
 
   const handleRunOptimization = async () => {
-    if (stops.length <= 1) return;
+    if (creationStops.length <= 1) return;
     try {
-      const sorted = await onOptimize(stops, originLat, originLng);
-      setStops(sorted);
+      const sorted = await onOptimize(creationStops, originLat, originLng);
+      setCreationStops(sorted);
       alert('Rota Otimizada via Google Directions API (optimizeWaypoints:true)! Paradas foram reordenadas para sequência de trânsito otimizada.');
     } catch (err: any) {
       alert('Falha na otimização: ' + err.message);
@@ -702,7 +802,7 @@ export function MotoristaDashboard({
   };
 
   const handlePublishRoute = () => {
-    if (stops.length === 0) {
+    if (creationStops.length === 0) {
       alert('Adicione pelo menos 1 parada para planejar sua jornada.');
       return;
     }
@@ -712,12 +812,12 @@ export function MotoristaDashboard({
       origin,
       originLat,
       originLng,
-      stops,
+      stops: creationStops,
       optimized: true
     });
 
     // Clear draft
-    setStops([]);
+    setCreationStops([]);
     setRouteName('Super Entrega ' + new Date().toLocaleDateString('pt-BR'));
     setActiveTab('salvas');
   };
@@ -728,6 +828,18 @@ export function MotoristaDashboard({
     onPostMessage(chatText.trim());
     setChatText('');
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-[400px] flex flex-col items-center justify-center p-12 bg-slate-50 rounded-3xl border border-slate-200/60 text-center font-sans max-w-xl mx-auto my-12 shadow-sm">
+        <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
+        <p className="text-sm text-slate-500 font-extrabold mt-4 uppercase tracking-wider">Conectando ao Firestore em tempo real...</p>
+        <p className="text-[11px] text-slate-400 mt-1 max-w-xs leading-relaxed">
+          Sincronizando rotas ativas e telemetria GPS. Por favor, aguarde.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div id="driver-main-panel" className="flex flex-col gap-5 select-none md:select-text max-w-6xl mx-auto w-full">
@@ -840,18 +952,7 @@ export function MotoristaDashboard({
       )}
 
       {/* Responsive Horizontal Tabs Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 bg-slate-100 p-2 rounded-2xl border border-slate-200/40 select-none w-full">
-        <button
-          type="button"
-          onClick={() => setActiveTab('mapa')}
-          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activeTab === 'mapa' ? 'bg-white text-slate-800 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-805'
-          }`}
-        >
-          <Map className="w-4 h-4 text-emerald-600 shrink-0" />
-          Monitor de Mapa
-        </button>
-        
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 bg-slate-100 p-2 rounded-2xl border border-slate-200/40 select-none w-full">
         <button
           type="button"
           onClick={() => setActiveTab('nova')}
@@ -867,7 +968,7 @@ export function MotoristaDashboard({
           type="button"
           onClick={() => setActiveTab('salvas')}
           className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activeTab === 'salvas' ? 'bg-white text-indigo-950 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+            activeTab === 'salvas' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           <Route className="w-4 h-4 text-indigo-600 shrink-0" />
@@ -884,254 +985,10 @@ export function MotoristaDashboard({
           <Truck className="w-4 h-4 text-emerald-600 shrink-0" />
           REC ({myReceivedRoutes.length})
         </button>
-
-        {activeRoute ? (
-          <button
-            type="button"
-            onClick={() => setActiveTab('ativa')}
-            className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
-              activeTab === 'ativa' ? 'bg-white text-emerald-955 shadow-sm border border-slate-200/40' : 'text-emerald-700 hover:text-emerald-905 bg-emerald-50/40 border border-emerald-100/30'
-            }`}
-          >
-            <Compass className="w-4 h-4 text-emerald-600 shrink-0 animate-spin" style={{ animationDuration: '6s' }} />
-            Jornada Ativa ({activeRoute.currentStopIndex + 1}/{activeRoute.stops.length})
-          </button>
-        ) : (
-          <div className="hidden lg:flex items-center justify-center py-3 px-2 rounded-xl text-xs font-black text-slate-350 select-none border border-dashed border-slate-200/60 uppercase tracking-wider">
-            Sem Rota Ativa
-          </div>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('chat')}
-          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activeTab === 'chat' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4 text-indigo-600 shrink-0" />
-          Suporte
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('resumos')}
-          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activeTab === 'resumos' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
-          Resumos ({myCompletedRoutes.length})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('perfil')}
-          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
-            activeTab === 'perfil' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          <User className="w-4 h-4 text-indigo-600 shrink-0" />
-          Perfil
-        </button>
       </div>
 
       {/* Tabs Panels Container */}
       <div className="w-full space-y-4">
-
-        {/* TAB 0: MONITOR DE MAPA */}
-        {activeTab === 'mapa' && (
-          <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 flex flex-col min-h-[500px]">
-            {/* Dynamic active trip navigation dashboard overlay */}
-            {activeRoute && (
-              <div className={`rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-sm transition-all duration-300 ${
-                isSharingLocation 
-                  ? 'bg-emerald-500 text-white animate-pulse' 
-                  : 'bg-slate-800 text-slate-300 animate-none'
-              }`}>
-                <div>
-                  <span className={`text-[10px] font-mono font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
-                    isSharingLocation ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-700 text-slate-400'
-                  }`}>
-                    {isSharingLocation ? 'JORNADA ATIVA' : 'JORNADA PAUSADA'}
-                  </span>
-                  <h3 className="font-bold text-sm mt-1">{activeRoute.name}</h3>
-                  <p className="text-xs opacity-90">
-                    {isSharingLocation 
-                      ? `Seu trajeto está sendo rastreado em tempo real na região ${region}.`
-                      : 'Compartilhamento de GPS temporariamente suspenso pelo condutor.'}
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-2 self-start sm:self-auto text-xs font-mono">
-                  <div className={`${isSharingLocation ? 'bg-emerald-600/60' : 'bg-slate-700/65'} p-2 rounded border ${isSharingLocation ? 'border-emerald-400/30' : 'border-slate-600/40'}`}>
-                    <span className="block text-[9px] uppercase opacity-85">Próxima entrega:</span>
-                    <strong className="text-sm font-black whitespace-nowrap">
-                      {activeRoute.stops[activeRoute.currentStopIndex]?.clientName || 'Concluída!'}
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* GPS Navigation shortcuts for active route */}
-            {activeRoute && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-slate-50 border border-slate-200 p-3.5 rounded-xl text-slate-800">
-                <div className="flex flex-col justify-between space-y-2">
-                  <div>
-                    <h4 className="font-bold text-xs text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                      <Navigation className="w-3.5 h-3.5 text-indigo-600" />
-                      Navegar Rota Completa
-                    </h4>
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      Abra todo o roteiro sequencial com todas as paradas planejadas e otimizadas no Google Maps.
-                    </p>
-                  </div>
-                  
-                  <div className="flex flex-wrap gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const originStr = `${activeRoute.originLat},${activeRoute.originLng}`;
-                        const stopsCount = activeRoute.stops.length;
-                        if (stopsCount === 0) {
-                          alert('Nenhuma parada cadastrada nesta rota.');
-                          return;
-                        }
-                        
-                        let destStr = '';
-                        let waypointsStr = '';
-                        
-                        if (stopsCount === 1) {
-                          destStr = `${activeRoute.stops[0].lat},${activeRoute.stops[0].lng}`;
-                        } else {
-                          const lastStop = activeRoute.stops[stopsCount - 1];
-                          destStr = `${lastStop.lat},${lastStop.lng}`;
-                          const intermediateStops = activeRoute.stops.slice(0, -1);
-                          waypointsStr = intermediateStops.map(s => `${s.lat},${s.lng}`).join('|');
-                        }
-                        
-                        let gMapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(originStr)}&destination=${encodeURIComponent(destStr)}`;
-                        if (waypointsStr) {
-                          gMapsUrl += `&waypoints=${encodeURIComponent(waypointsStr)}`;
-                        }
-                        
-                        window.open(gMapsUrl, '_blank');
-                      }}
-                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] px-3.5 py-2 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
-                    >
-                      <Map className="w-3.5 h-3.5 text-white" />
-                      Abrir Roteiro Completo (Google Maps)
-                    </button>
-                  </div>
-                </div>
-
-                {(() => {
-                  const currentStop = activeRoute.stops[activeRoute.currentStopIndex];
-                  if (!currentStop) return (
-                    <div className="bg-white border border-slate-200/80 rounded-xl p-3 flex items-center justify-center text-center">
-                      <p className="text-[11px] text-slate-400 font-medium">Todas as entregas foram finalizadas!</p>
-                    </div>
-                  );
-                  
-                  return (
-                    <div className="bg-white border border-slate-200/80 rounded-xl p-3 flex flex-col justify-between space-y-2.5 shadow-sm">
-                      <div>
-                        <span className="text-[9px] font-mono font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded uppercase">
-                          Próxima Parada ({activeRoute.currentStopIndex + 1}/{activeRoute.stops.length})
-                        </span>
-                        <h5 className="font-bold text-xs text-slate-800 mt-1 truncate">
-                          {currentStop.clientName}
-                        </h5>
-                        <p className="text-[10px] text-slate-400 truncate" title={currentStop.address}>
-                          📍 {currentStop.address}
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const gMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${currentStop.lat},${currentStop.lng}`;
-                            window.open(gMapsUrl, '_blank');
-                          }}
-                          className="flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-700 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer"
-                        >
-                          <svg className="w-3.5 h-3.5 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                          </svg>
-                          Google Maps
-                        </button>
-                        
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const wazeUrl = `https://waze.com/ul?ll=${currentStop.lat},${currentStop.lng}&navigate=yes`;
-                            window.open(wazeUrl, '_blank');
-                          }}
-                          className="flex items-center justify-center gap-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-100 text-sky-700 font-bold text-[11px] px-2.5 py-1.5 rounded-lg transition-all active:scale-95 cursor-pointer"
-                        >
-                          <svg className="w-3.5 h-3.5 text-sky-500" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
-                          </svg>
-                          Waze
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between select-none">
-              <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">Monitor de Mapa:</span>
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setMapMode('vector')}
-                  className={`px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                    mapMode === 'vector' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  Mapa Vetorial
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMapMode('google')}
-                  className={`px-3 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                    mapMode === 'google' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  Google Maps Platform
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 min-h-[450px]">
-              {mapMode === 'vector' ? (
-                <InteractiveMap 
-                  rota={activeRoute} 
-                  driverLocation={activeRoute ? locations[user.id] || null : null}
-                  region={region}
-                  onStopClick={setConfirmingStop}
-                />
-              ) : (
-                <RouteMap 
-                  rotas={myRoutes}
-                  locations={locations}
-                  currentUserRegion={region}
-                  currentUserRole={user.role}
-                  singleRouteMode={activeRoute}
-                  singleDriverLocation={activeRoute ? locations[user.id] || null : null}
-                  onStopClick={setConfirmingStop}
-                />
-              )}
-            </div>
-          </div>
-        )}
-
-
-
         {/* TAB 1: NEW ROUTE PLANNING WIZARD */}
         {activeTab === 'nova' && (
           <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 text-xs font-sans">
@@ -1287,10 +1144,10 @@ export function MotoristaDashboard({
               </div>
 
               {/* Added stops listing */}
-              {stops.length > 0 && (
+              {creationStops.length > 0 && (
                 <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
                   <div className="flex justify-between items-center text-[10px] text-slate-400 mb-1 font-mono font-bold uppercase tracking-wider">
-                    <span>Paradas ({stops.length}):</span>
+                    <span>Paradas ({creationStops.length}):</span>
                     <button
                       type="button"
                       onClick={handleRunOptimization}
@@ -1300,7 +1157,7 @@ export function MotoristaDashboard({
                       Optimize (Google TSP)
                     </button>
                   </div>
-                  {stops.map((st, sidx) => (
+                  {creationStops.map((st, sidx) => (
                     <div key={st.id} className="p-3 border border-slate-100 rounded-xl bg-slate-50/70 flex items-center justify-between text-[11px]">
                       <div className="min-w-0 flex-1 pr-2">
                         <strong className="text-slate-800 block truncate">{sidx + 1}. {st.clientName}</strong>
@@ -1370,52 +1227,6 @@ export function MotoristaDashboard({
                 <div className="text-center py-12 text-slate-400 font-medium">Você não criou nenhuma rota ainda. Use a aba Nova Rota para começar.</div>
               )}
             </div>
-          </div>
-        )}
-
-        {/* TAB 3: SUPPORT REGIONAL CHAT */}
-        {activeTab === 'chat' && (
-          <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm flex flex-col h-[350px] text-xs font-sans">
-            <span className="font-extrabold text-slate-800 border-b border-slate-100 pb-2.5 block mb-2 uppercase tracking-wider">Canal de Ajuda Regional</span>
-            
-            {/* Tooltip explicativo regional */}
-            <div className="bg-amber-50/50 border border-amber-200/50 rounded-xl p-2.5 mb-2 flex items-start gap-1.5 text-[10px] text-amber-900 font-medium select-none shadow-xs">
-              <Info className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
-              <p className="leading-relaxed">
-                <strong>Visibilidade Restrita ({region}):</strong> Mensagens enviadas aqui só serão visíveis para gerentes e vendedores parceiros alocados nesta mesma região.
-              </p>
-            </div>
-
-            <div className="flex-1 overflow-y-auto py-2 space-y-3 pr-1">
-              {chats.filter(c => c.region === region).map(c => (
-                <div key={c.id} className="p-3 rounded-2xl bg-slate-50 border border-slate-100 shadow-sm">
-                  <div className="flex justify-between items-center text-[10px] text-slate-400 mb-1">
-                    <span className="font-extrabold text-indigo-700">{c.senderName}</span>
-                    <span>{new Date(c.timestamp).toLocaleTimeString()}</span>
-                  </div>
-                  <p className="text-slate-700 leading-relaxed text-[11px] font-medium">{c.message}</p>
-                  {c.audioUrl && (
-                    <div className="mt-2 pt-2 border-t border-slate-200/40">
-                      <AudioPlayer src={c.audioUrl} />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <form onSubmit={handleSendChatText} className="flex gap-2 border-t border-slate-100 pt-3 bg-white mt-2 items-center font-sans">
-              <input
-                type="text"
-                placeholder="Exemplo: Carga despachada com sucesso..."
-                value={chatText}
-                onChange={e => setChatText(e.target.value)}
-                className="flex-1 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 p-3 bg-white text-[14px] md:text-xs h-11"
-              />
-              <AudioRecorderButton onSendAudio={(base64) => onPostMessage('🎙️ Nota de Áudio', base64)} />
-              <button type="submit" className="bg-indigo-600 hover:bg-indigo-700 rounded-xl w-11 h-11 text-white font-extrabold flex items-center justify-center cursor-pointer shrink-0 active:scale-95 transition-all shadow-sm">
-                <Send className="w-4 h-4" />
-              </button>
-            </form>
           </div>
         )}
 
@@ -1686,772 +1497,13 @@ export function MotoristaDashboard({
               </div>
             )}
 
-            {/* TAB 5: FINISHED ROUTE SUMMARY */}
-            {activeTab === 'resumos' && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 text-xs font-sans">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-slate-800 text-xs uppercase tracking-wider block">Resumo de Rotas Finalizadas</span>
-                  <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] uppercase font-mono font-bold px-2 py-0.5 rounded-full">
-                    {myCompletedRoutes.length} Concluídas
-                  </span>
-                </div>
 
-                <RouteTimeComparisonChart completedRoutes={myCompletedRoutes} performanceLogs={performanceLogs} />
 
-                {myCompletedRoutes.length > 0 ? (
-                  (() => {
-                    const activeCompletedRouteId = selectedCompletedRouteId || myCompletedRoutes[myCompletedRoutes.length - 1]?.id || null;
-                    const activeCompletedRoute = myCompletedRoutes.find(r => r.id === activeCompletedRouteId) || myCompletedRoutes[myCompletedRoutes.length - 1];
-                    const activePerformanceLog = performanceLogs.find(p => p.routeId === activeCompletedRoute?.id) || null;
 
-                    // Telemetry & fallbacks
-                    const dist = activePerformanceLog ? activePerformanceLog.actualDistanceKm : (activeCompletedRoute ? parseFloat((activeCompletedRoute.stops.length * 7.5 + 4.2).toFixed(1)) : 0);
-                    const planDist = activePerformanceLog ? activePerformanceLog.plannedDistanceKm : parseFloat((dist * 0.95).toFixed(1));
-                    const totalStops = activeCompletedRoute?.stops?.length || 0;
-                    
-                    let timeStr = "";
-                    if (activePerformanceLog && activePerformanceLog.startTimestamp && activePerformanceLog.endTimestamp) {
-                      const diffMs = new Date(activePerformanceLog.endTimestamp).getTime() - new Date(activePerformanceLog.startTimestamp).getTime();
-                      const diffMins = Math.round(diffMs / 60000);
-                      const hrs = Math.floor(diffMins / 60);
-                      const mins = diffMins % 60;
-                      timeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
-                    } else if (activeCompletedRoute) {
-                      const mins = activeCompletedRoute.stops.length * 15 + 35;
-                      const hrs = Math.floor(mins / 60);
-                      const rem = mins % 60;
-                      timeStr = `${hrs}h ${rem}m`;
-                    }
 
-                    return (
-                      <div className="space-y-4">
-                        {/* Selector of completed routes if more than 1 */}
-                        {myCompletedRoutes.length > 1 && (
-                          <div className="bg-slate-50 border border-slate-150 p-2.5 rounded-xl flex items-center justify-between gap-2">
-                            <label className="text-[10px] font-bold text-slate-500 uppercase font-mono shrink-0 font-sans">Selecionar Viagem:</label>
-                            <select
-                              value={activeCompletedRoute?.id || ''}
-                              onChange={(e) => setSelectedCompletedRouteId(e.target.value)}
-                              className="flex-1 bg-white border border-slate-200 text-xs px-2.5 py-1.5 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-700 font-medium font-sans"
-                            >
-                              {myCompletedRoutes.map(completed => (
-                                <option key={completed.id} value={completed.id}>
-                                  {completed.name} ({new Date().toLocaleDateString('pt-BR')})
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )}
 
-                        {/* Highly Polished Resumo Main Card */}
-                        <div className="border border-emerald-100 bg-emerald-50/20 rounded-2xl p-4 space-y-4 shadow-sm">
-                          <div className="flex items-center justify-between border-b border-emerald-110 pb-2">
-                            <div>
-                              <h4 className="font-extrabold text-slate-800 text-[13px]">{activeCompletedRoute?.name}</h4>
-                              <span className="text-[10px] text-slate-400 block font-mono">
-                                ID: #{activeCompletedRoute?.id.substring(activeCompletedRoute?.id.length - 8)}
-                              </span>
-                            </div>
-                            <span className="px-2.5 py-1 bg-emerald-500 text-white text-[10px] font-black uppercase rounded-lg tracking-wider">
-                              Concluída com Sucesso 🏆
-                            </span>
-                          </div>
 
-                          {/* Bento grid of metrics */}
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="bg-white border border-slate-100 p-3 rounded-xl flex flex-col justify-between shadow-xs">
-                              <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wider font-mono">Distância Percorrida</span>
-                              <div className="mt-1">
-                                <span className="text-lg font-black text-slate-800 font-mono">{dist} km</span>
-                                <span className="block text-[9px] text-slate-400 font-mono">Planejado: {planDist} km</span>
-                              </div>
-                            </div>
 
-                            <div className="bg-white border border-slate-100 p-3 rounded-xl flex flex-col justify-between shadow-xs">
-                              <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wider font-mono">Tempo de Viagem</span>
-                              <div className="mt-1">
-                                <span className="text-lg font-black text-slate-800 font-mono">{timeStr}</span>
-                                <span className="block text-[9px] text-emerald-600 font-bold uppercase tracking-wider font-mono flex items-center gap-0.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping inline-block"></span> Sem atrasos
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="bg-white border border-slate-100 p-3 rounded-xl col-span-2 flex items-center justify-between shadow-xs">
-                              <div>
-                                <span className="text-[9px] text-slate-400 uppercase font-bold tracking-wider font-mono block mb-1">Taxa de Conclusão</span>
-                                <span className="text-xs font-black text-slate-700">
-                                  {totalStops} de {totalStops} paradas atendidas
-                                </span>
-                              </div>
-                              <div className="bg-emerald-500 shrink-0 text-white text-xs font-mono font-black h-9 w-9 rounded-full flex items-center justify-center border-2 border-white shadow-md">
-                                100%
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Deviations Panel */}
-                          <div className="bg-slate-50 border border-slate-150 p-2.5 rounded-xl flex items-center justify-between text-[11px] font-mono">
-                            <div className="flex items-center gap-1 text-slate-600">
-                              <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                              <span>Desvios Geográficos:</span>
-                            </div>
-                            <strong className="text-slate-800 font-extrabold">{activePerformanceLog?.routeDeviations || 0} desvios</strong>
-                          </div>
-                        </div>
-
-                        {/* Timeline of successfully completed stops */}
-                        <div className="space-y-3">
-                          <span className="font-extrabold text-slate-700 text-[10px] uppercase font-mono block tracking-wider">
-                            📋 Relatório de Entregas Concluídas
-                          </span>
-
-                          <div className="relative border-l border-emerald-500 ml-3 pl-4 space-y-4 py-2">
-                            {activeCompletedRoute?.stops?.map((stop, sIdx) => {
-                              const arrivalTime = activePerformanceLog?.stopTelemetry?.[sIdx]?.arrivalTimestamp 
-                                ? new Date(activePerformanceLog.stopTelemetry[sIdx].arrivalTimestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-                                : (() => {
-                                    const baseHour = 8;
-                                    const totalMinutes = sIdx * 50 + 40;
-                                    const hour = baseHour + Math.floor(totalMinutes / 60);
-                                    const min = totalMinutes % 60;
-                                    return `${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
-                                  })();
-
-                              const handleWhatsAppMsg = () => {
-                                if (!stop.clientWhatsApp) return;
-                                const text = `Olá ${stop.clientName}, sua entrega no endereço ${stop.address} foi concluída com sucesso às ${arrivalTime} pelo motorista ${user.name}!`;
-                                const cleanPhone = stop.clientWhatsApp.replace(/\D/g, '');
-                                window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`);
-                              };
-
-                              return (
-                                <div key={stop.id} className="relative">
-                                  {/* Timeline Circle Bullet */}
-                                  <span className="absolute -left-[22px] top-1 h-3 w-3 bg-emerald-500 rounded-full border-2 border-white flex items-center justify-center text-white shrink-0 shadow-sm">
-                                    <Check className="w-2 h-2 font-bold" />
-                                  </span>
-
-                                  <div className="bg-white border border-slate-150 p-3 rounded-xl shadow-xs space-y-1.5">
-                                    <div className="flex items-center justify-between">
-                                      <strong className="text-slate-800 text-[11px] font-extrabold truncate max-w-[130px]">
-                                        #{sIdx + 1} {stop.clientName}
-                                      </strong>
-                                      <span className="text-[10px] text-slate-400 font-mono font-semibold flex items-center gap-0.5">
-                                        <Clock className="w-3 h-3 text-slate-400" />
-                                        {arrivalTime}
-                                      </span>
-                                    </div>
-
-                                    <p className="text-[10px] text-slate-500 line-clamp-1">📍 {stop.address}</p>
-
-                                    <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                                      <span className="text-[9px] text-emerald-600 font-bold bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded-md uppercase">
-                                        Sucesso ✅
-                                      </span>
-                                      {stop.clientWhatsApp && (
-                                        <button
-                                          type="button"
-                                          onClick={handleWhatsAppMsg}
-                                          className="text-emerald-700 hover:text-emerald-800 text-[10px] font-bold flex items-center gap-1 font-sans underline cursor-pointer"
-                                        >
-                                          <Phone className="w-3 h-3 text-emerald-500 fill-emerald-100" />
-                                          {stop.clientWhatsApp}
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })()
-                ) : (
-                  <div className="text-center py-16 text-slate-400 space-y-2">
-                    <div className="w-12 h-12 rounded-full bg-slate-50 border border-slate-200/80 mx-auto flex items-center justify-center">
-                      <CheckCircle className="w-6 h-6 text-slate-300" />
-                    </div>
-                    <p className="font-semibold text-xs text-slate-500">Sem Jornadas Concluídas</p>
-                    <p className="text-[10px] text-slate-400 max-w-xs mx-auto leading-relaxed">
-                      As rotas que você iniciar e concluir com sucesso serão registradas para consolidação telemetria e visualização de tempos/distâncias.
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* TAB 5.5: DRIVER PERSONAL PROFILE */}
-            {activeTab === 'perfil' && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-6 text-xs font-sans">
-                {/* Visual Header */}
-                <div className="relative overflow-hidden bg-gradient-to-r from-indigo-900 to-slate-900 rounded-2xl p-5 text-white flex flex-col sm:flex-row items-center gap-4 shadow-sm select-none">
-                  {/* Glowing background shapes */}
-                  <div className="absolute -right-10 -top-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
-                  <div className="absolute -left-10 -bottom-10 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl"></div>
-
-                  <div className="relative shrink-0 w-16 h-16 rounded-full bg-gradient-to-tr from-indigo-500 via-purple-500 to-emerald-500 p-0.5 shadow-md flex items-center justify-center">
-                    <div className="w-full h-full bg-slate-900 rounded-full flex items-center justify-center font-black text-xl tracking-wider text-white">
-                      {profileName ? profileName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase() : 'DR'}
-                    </div>
-                    <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-emerald-500 border-2 border-slate-900 flex items-center justify-center">
-                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                    </span>
-                  </div>
-
-                  <div className="text-center sm:text-left flex-1 space-y-1 z-10">
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-1.5 justify-center sm:justify-start">
-                      <h3 className="font-extrabold text-base text-slate-100">{profileName || 'Motorista'}</h3>
-                      <span className="self-center bg-indigo-500/30 text-indigo-200 border border-indigo-500/50 text-[9px] uppercase font-bold font-mono px-2 py-0.5 rounded-full">
-                        Região: {region}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 font-mono">{user.email}</p>
-                    <div className="flex items-center gap-2 mt-1 justify-center sm:justify-start text-[10px] text-slate-300">
-                      <span className="flex items-center gap-1 font-mono">
-                        <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                        CNH Cat. {profileCnhCategory || 'B'}
-                      </span>
-                      <span>•</span>
-                      <span className="font-mono">Placa: {profilePlate || 'N/D'}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Bento Statistics Grid */}
-                <div className="space-y-2">
-                  <span className="font-extrabold text-slate-700 text-[10px] uppercase font-mono block tracking-wider">
-                    📊 Desempenho & Estatísticas de Jornada
-                  </span>
-                  
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400">
-                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Rotas Atendidas</span>
-                        <Route className="w-3.5 h-3.5 text-indigo-500" />
-                      </div>
-                      <div className="mt-2">
-                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.routesCount}</span>
-                        <span className="block text-[8px] text-slate-400">Viagens finalizadas</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400">
-                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Quilometragem</span>
-                        <Navigation className="w-3.5 h-3.5 text-indigo-500" />
-                      </div>
-                      <div className="mt-2">
-                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.totalKm} <span className="text-xs">km</span></span>
-                        <span className="block text-[8px] text-slate-400">Distância real</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400">
-                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Entregas POD</span>
-                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-                      </div>
-                      <div className="mt-2">
-                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.totalStopsCompleted}</span>
-                        <span className="block text-[8px] text-slate-400">Assinadas & fotos</span>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 border border-slate-150 p-3 rounded-xl flex flex-col justify-between shadow-xs">
-                      <div className="flex items-center justify-between text-slate-400">
-                        <span className="text-[8px] uppercase font-bold tracking-wider font-mono">Tempo / Parada</span>
-                        <Clock className="w-3.5 h-3.5 text-indigo-500" />
-                      </div>
-                      <div className="mt-2">
-                        <span className="text-lg font-black text-slate-800 font-mono">{profileStats.avgTimePerStop} <span className="text-xs">min</span></span>
-                        <span className="block text-[8px] text-slate-400">Tempo médio local</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Profile Edit Form */}
-                <form onSubmit={async (e) => {
-                  e.preventDefault();
-                  if (!profileName.trim()) {
-                    alert('Por favor, informe seu nome completo.');
-                    return;
-                  }
-                  setIsSavingProfile(true);
-                  try {
-                    if (onUpdateUser) {
-                      const updated: RouteUser = {
-                        ...user,
-                        name: profileName,
-                        phone: profilePhone,
-                        address: profileAddress,
-                        cnh: profileCnh,
-                        cnhCategory: profileCnhCategory,
-                        cnhExpiration: profileCnhExpiration,
-                        vehicleModel: profileVehicleModel,
-                        plate: profilePlate
-                      } as any;
-                      await onUpdateUser(updated);
-                      alert('Perfil profissional atualizado com sucesso no banco de dados!');
-                    } else {
-                      alert('Alterações salvas localmente!');
-                    }
-                  } catch (err: any) {
-                    console.error(err);
-                    alert('Erro ao salvar as informações: ' + (err.message || err));
-                  } finally {
-                    setIsSavingProfile(false);
-                  }
-                }} className="space-y-4">
-                  <span className="font-extrabold text-slate-700 text-[10px] uppercase font-mono block tracking-wider">
-                    📝 Cadastro & Dados do Condutor
-                  </span>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Nome Completo */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Nome Completo</label>
-                      <input
-                        type="text"
-                        value={profileName}
-                        onChange={(e) => setProfileName(e.target.value)}
-                        placeholder="Ex: Alexander Link"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
-                        required
-                      />
-                    </div>
-
-                    {/* Celular / WhatsApp */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">WhatsApp / Telefone</label>
-                      <input
-                        type="text"
-                        value={profilePhone}
-                        onChange={(e) => setProfilePhone(e.target.value)}
-                        placeholder="Ex: (27) 99999-9999"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
-                      />
-                    </div>
-
-                    {/* Endereço Residencial */}
-                    <div className="sm:col-span-2 space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Endereço Residencial</label>
-                      <input
-                        type="text"
-                        value={profileAddress}
-                        onChange={(e) => setProfileAddress(e.target.value)}
-                        placeholder="Rua, número, bairro, cidade"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
-                      />
-                    </div>
-
-                    {/* CNH */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Número de Registro CNH</label>
-                      <input
-                        type="text"
-                        value={profileCnh}
-                        onChange={(e) => setProfileCnh(e.target.value)}
-                        placeholder="Registro CNH"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-mono"
-                      />
-                    </div>
-
-                    {/* CNH Category */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Categoria CNH</label>
-                      <select
-                        value={profileCnhCategory}
-                        onChange={(e) => setProfileCnhCategory(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-semibold font-sans"
-                      >
-                        <option value="">Selecione</option>
-                        <option value="A">A (Moto)</option>
-                        <option value="B">B (Carro)</option>
-                        <option value="C">C (Caminhão Leve)</option>
-                        <option value="D">D (Microônibus/Ônibus)</option>
-                        <option value="E">E (Articulado/Carreta)</option>
-                        <option value="AB">AB (Moto e Carro)</option>
-                        <option value="AC">AC</option>
-                        <option value="AD">AD</option>
-                        <option value="AE">AE</option>
-                      </select>
-                    </div>
-
-                    {/* CNH Expiration */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Vencimento da CNH</label>
-                      <input
-                        type="date"
-                        value={profileCnhExpiration}
-                        onChange={(e) => setProfileCnhExpiration(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-mono"
-                      />
-                    </div>
-
-                    {/* Modelo Veículo */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Modelo do Veículo</label>
-                      <input
-                        type="text"
-                        value={profileVehicleModel}
-                        onChange={(e) => setProfileVehicleModel(e.target.value)}
-                        placeholder="Ex: Fiat Fiorino / Mercedes Accelo"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-medium font-sans"
-                      />
-                    </div>
-
-                    {/* Placa */}
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Placa do Veículo</label>
-                      <input
-                        type="text"
-                        value={profilePlate}
-                        onChange={(e) => setProfilePlate(e.target.value)}
-                        placeholder="Ex: ABC-1234 / ABC1D23"
-                        className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800 font-bold font-mono placeholder:font-sans placeholder:font-normal uppercase"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Submit Button */}
-                  <div className="pt-3">
-                    <button
-                      type="submit"
-                      disabled={isSavingProfile}
-                      className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-extrabold uppercase rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 active:scale-98 cursor-pointer tracking-wider text-xs"
-                    >
-                      {isSavingProfile ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          Salvando alterações...
-                        </>
-                      ) : (
-                        <>
-                          <Check className="w-4 h-4" />
-                          Salvar Dados de Perfil
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </form>
-
-                {/* Safety & Guideline Tips */}
-                <div className="bg-emerald-50/20 border border-emerald-100 rounded-2xl p-4 flex gap-3 text-slate-600">
-                  <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0 text-emerald-600">
-                    <Award className="w-4.5 h-4.5" />
-                  </div>
-                  <div className="space-y-1">
-                    <h5 className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wide">Manual de Segurança do Condutor RouteLog</h5>
-                    <p className="text-[10px] leading-relaxed text-slate-500">
-                      Mantenha seu cadastro sempre atualizado. Suas informações de veículo e CNH são visíveis para os gerentes regionais na hora do agendamento, garantindo a conformidade e a segurança operacional das entregas.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* TAB 6: ACTIVE STOP CONFIRMATION & VERIFICATION (SIGNATURE & PHOTO) */}
-            {activeTab === 'ativa' && activeRoute && (
-              <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 text-xs font-sans">
-                {(() => {
-                  const currentStopIndex = activeRoute.currentStopIndex;
-                  const currentStop = activeRoute.stops[currentStopIndex];
-
-                  if (!currentStop) {
-                    return (
-                      <div className="text-center py-10 space-y-3">
-                        <div className="w-14 h-14 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mx-auto text-emerald-500">
-                          <Check className="w-7 h-7" />
-                        </div>
-                        <div>
-                          <h4 className="font-extrabold text-slate-800 text-sm uppercase">Todas as Entregas Concluídas!</h4>
-                          <p className="text-[10px] text-slate-400 mt-1 max-w-xs mx-auto">
-                            Excelente! Todas as paradas deste roteiro foram entregues e confirmadas com assinatura digital.
-                          </p>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            try {
-                              // Mark the route itself as completed
-                              await onUpdateRoute(activeRoute.id, { status: 'completed' });
-                              alert('Jornada de entregas finalizada com sucesso! Relatório telemetria salvo.');
-                              setActiveTab('resumos');
-                            } catch (e) {
-                              alert('Falha ao concluir rota. Tente novamente.');
-                            }
-                          }}
-                          className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider text-xs"
-                        >
-                          <CheckCircle className="w-4 h-4 text-white" />
-                          Finalizar Jornada
-                        </button>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="space-y-4">
-                      {/* Delivery Card Header */}
-                      <div className="border border-emerald-100 bg-emerald-50/15 rounded-2xl p-4">
-                        <div className="flex items-center justify-between font-mono text-[9px] text-emerald-700 font-extrabold pb-2 border-b border-emerald-100/50 uppercase tracking-widest">
-                          <span>📍 Entrega Atual (Parada #{currentStopIndex + 1})</span>
-                          <span>Região: {region}</span>
-                        </div>
-                        
-                        <div className="mt-3">
-                          <strong className="text-slate-800 text-[13px] block font-black leading-tight">{currentStop.clientName}</strong>
-                          <p className="text-[11px] text-slate-500 mt-1 select-all font-medium leading-snug">{currentStop.address}</p>
-                        </div>
-
-                        {/* Customer Quick Actions */}
-                        <div className="flex flex-wrap gap-2 mt-4 pt-3 border-t border-slate-100">
-                          {currentStop.clientWhatsApp && (
-                            <a
-                              href={`https://wa.me/${currentStop.clientWhatsApp.replace(/\D/g, '')}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex-1 min-w-[100px] py-2.5 bg-white border border-slate-200 hover:border-emerald-200 text-emerald-800 hover:bg-emerald-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
-                            >
-                              <Phone className="w-3.5 h-3.5 text-emerald-500 fill-emerald-150 inline" />
-                              <span className="align-middle ml-1">WhatsApp</span>
-                            </a>
-                          )}
-                          <a
-                            href={`https://www.google.com/maps/dir/?api=1&destination=${currentStop.lat},${currentStop.lng}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 min-w-[100px] py-2.5 bg-white border border-slate-200 hover:border-indigo-200 text-indigo-800 hover:bg-indigo-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
-                          >
-                            <svg className="w-3.5 h-3.5 text-emerald-600 inline" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-                            </svg>
-                            <span className="align-middle ml-1">Google Maps</span>
-                          </a>
-                          <a
-                            href={`https://waze.com/ul?ll=${currentStop.lat},${currentStop.lng}&navigate=yes`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex-1 min-w-[100px] py-2.5 bg-white border border-slate-200 hover:border-sky-200 text-sky-800 hover:bg-sky-50 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all shadow-sm active:scale-95 text-[10px] uppercase tracking-wider select-none leading-none text-center"
-                          >
-                            <svg className="w-3.5 h-3.5 text-sky-500 inline" viewBox="0 0 24 24" fill="currentColor">
-                              <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
-                            </svg>
-                            <span className="align-middle ml-1">Waze</span>
-                          </a>
-                        </div>
-                      </div>
-
-                      {/* CLIENT DIGITAL SIGNATURE PAD */}
-                      <div className="space-y-2 select-none">
-                        <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider">Passo 1: Assinatura Digital do Cliente</span>
-                          {hasSigned && (
-                            <button
-                              type="button"
-                              onClick={handleClearSignature}
-                              className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                              Limpar
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="relative border border-slate-250 bg-slate-50/50 rounded-2xl overflow-hidden aspect-[16/9] flex flex-col shadow-inner">
-                          <canvas
-                            ref={signatureCanvasRef}
-                            onMouseDown={handleStartDrawing}
-                            onMouseMove={handleDraw}
-                            onMouseUp={handleStopDrawing}
-                            onMouseLeave={handleStopDrawing}
-                            onTouchStart={handleStartDrawing}
-                            onTouchMove={handleDraw}
-                            onTouchEnd={handleStopDrawing}
-                            className="w-full h-full bg-transparent cursor-crosshair touch-none"
-                          />
-                          {!hasSigned && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900/5 backdrop-blur-[0.5px] pointer-events-none select-none text-slate-400">
-                              <span className="text-[10px] uppercase font-black tracking-widest text-slate-600">Assinar aqui na tela</span>
-                              <span className="text-[9px] text-slate-400 mt-1">Utilize o dedo ou caneta touch</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* PHOTO DELIVERY CONFERENCE WITH DEVICE NATIVE CAMERA */}
-                      <div className="space-y-3">
-                        <span className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider block">Passo 2: Comprovação Digital (Mídia POD)</span>
-                        
-                        <div className="grid grid-cols-1 gap-3">
-                          
-                          {/* 1. CANHOTO DA NOTA FISCAL */}
-                          <div className="border border-slate-200 bg-white p-3.5 rounded-2xl shadow-xs space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-705 flex items-center gap-1.5">
-                                📝 Canhoto da Nota Fiscal <span className="text-[9px] text-indigo-650 bg-indigo-50 border border-indigo-100 font-extrabold px-1.5 py-0.5 rounded uppercase">Obrigatório</span>
-                              </span>
-                              {capturedCanhoto && (
-                                <button
-                                  type="button"
-                                  onClick={() => setCapturedCanhoto(null)}
-                                  className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
-                                >
-                                  <RefreshCw className="w-3 h-3" />
-                                  Trocar
-                                </button>
-                              )}
-                            </div>
-                            
-                            {!capturedCanhoto ? (
-                              <div>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  capture="environment"
-                                  id="canhoto-capture-input"
-                                  className="hidden"
-                                  onChange={handleCanhotoFileChange}
-                                />
-                                <label
-                                  htmlFor="canhoto-capture-input"
-                                  className="w-full min-h-[46px] bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 text-slate-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs active:scale-98 select-none"
-                                >
-                                  <Camera className="w-4 h-4 text-slate-400" />
-                                  Fotografar Canhoto Assinado
-                                </label>
-                              </div>
-                            ) : (
-                              <div className="relative border border-emerald-200 bg-emerald-50/10 p-1 rounded-xl overflow-hidden shadow-inner">
-                                <img
-                                  src={capturedCanhoto}
-                                  alt="Canhoto da NF"
-                                  referrerPolicy="no-referrer"
-                                  className="w-full aspect-[16/9] object-cover rounded-lg"
-                                />
-                                <span className="absolute bottom-2 right-2 bg-emerald-600 text-white font-mono font-black text-[8px] px-1.5 py-0.5 rounded uppercase">Salvo</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 2. FOTO DO ESTABELECIMENTO / LOCAL */}
-                          <div className="border border-slate-200 bg-white p-3.5 rounded-2xl shadow-xs space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-705 flex items-center gap-1.5">
-                                🏠 Fachada / Local de Entrega <span className="text-[9px] text-indigo-650 bg-indigo-50 border border-indigo-100 font-extrabold px-1.5 py-0.5 rounded uppercase">Obrigatório</span>
-                              </span>
-                              {capturedLocal && (
-                                <button
-                                  type="button"
-                                  onClick={() => setCapturedLocal(null)}
-                                  className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
-                                >
-                                  <RefreshCw className="w-3 h-3" />
-                                  Trocar
-                                </button>
-                              )}
-                            </div>
-                            
-                            {!capturedLocal ? (
-                              <div>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  capture="environment"
-                                  id="local-capture-input"
-                                  className="hidden"
-                                  onChange={handleLocalFileChange}
-                                />
-                                <label
-                                  htmlFor="local-capture-input"
-                                  className="w-full min-h-[46px] bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 text-slate-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs active:scale-98 select-none"
-                                >
-                                  <Camera className="w-4 h-4 text-slate-400" />
-                                  Fotografar Fachada / Carga
-                                </label>
-                              </div>
-                            ) : (
-                              <div className="relative border border-emerald-200 bg-emerald-50/10 p-1 rounded-xl overflow-hidden shadow-inner">
-                                <img
-                                  src={capturedLocal}
-                                  alt="Fachada do Local"
-                                  referrerPolicy="no-referrer"
-                                  className="w-full aspect-[16/9] object-cover rounded-lg"
-                                />
-                                <span className="absolute bottom-2 right-2 bg-emerald-600 text-white font-mono font-black text-[8px] px-1.5 py-0.5 rounded uppercase">Salvo</span>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 3. COMPROVANTE ADICIONAL / MERCADORIA (OPCIONAL) */}
-                          <div className="border border-slate-200 bg-white p-3.5 rounded-2xl shadow-xs space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-705 flex items-center gap-1.5">
-                                📦 Foto Adicional da Mercadoria <span className="text-[9px] text-slate-500 bg-slate-100 border border-slate-200 font-extrabold px-1.5 py-0.5 rounded uppercase">Opcional</span>
-                              </span>
-                              {capturedPhoto && (
-                                <button
-                                  type="button"
-                                  onClick={() => setCapturedPhoto(null)}
-                                  className="text-[10px] font-black text-rose-600 hover:text-rose-700 uppercase flex items-center gap-1 hover:underline cursor-pointer"
-                                >
-                                  <RefreshCw className="w-3 h-3" />
-                                  Trocar
-                                </button>
-                              )}
-                            </div>
-                            
-                            {!capturedPhoto ? (
-                              <div>
-                                <input
-                                  type="file"
-                                  accept="image/*"
-                                  capture="environment"
-                                  id="photo-capture-input"
-                                  className="hidden"
-                                  onChange={handlePhotoFileChange}
-                                />
-                                <label
-                                  htmlFor="photo-capture-input"
-                                  className="w-full min-h-[46px] bg-slate-50 hover:bg-slate-100 border border-dashed border-slate-300 text-slate-600 font-bold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer text-xs active:scale-98 select-none"
-                                >
-                                  <Camera className="w-4 h-4 text-slate-400" />
-                                  Fotografar Mercadoria
-                                </label>
-                              </div>
-                            ) : (
-                              <div className="relative border border-slate-200 bg-slate-50 p-1 rounded-xl overflow-hidden shadow-inner">
-                                <img
-                                  src={capturedPhoto}
-                                  alt="Mercadoria Carga"
-                                  referrerPolicy="no-referrer"
-                                  className="w-full aspect-[16/9] object-cover rounded-lg"
-                                />
-                                <span className="absolute bottom-2 right-2 bg-slate-500 text-white font-mono font-black text-[8px] px-1.5 py-0.5 rounded uppercase">Anexo</span>
-                              </div>
-                            )}
-                          </div>
-
-                        </div>
-                      </div>
-
-                      {/* CONCLUDE SUBMIT ACTION BUTTON */}
-                      <button
-                        type="button"
-                        onClick={() => handleConfirmDelivery(activeRoute.id, currentStop.id)}
-                        className="w-full mt-6 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-650 hover:from-emerald-700 hover:to-teal-700 text-white font-black uppercase rounded-2xl flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-98 text-xs tracking-wider cursor-pointer"
-                      >
-                        <CheckCircle className="w-4 h-4 fill-white text-emerald-605" />
-                        Confirmar & Registrar Entrega
-                      </button>
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
           </div>
         )}
       </div>
