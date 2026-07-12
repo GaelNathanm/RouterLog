@@ -16,8 +16,8 @@ import { VendedorDashboard } from './components/VendedorDashboard';
 import UserProfilePage from './components/UserProfilePage';
 import ControlPanelMockMap from './components/ControlPanelMockMap';
 import { 
-  Network, LayoutDashboard, HelpCircle, EyeOff, ShieldAlert,
-  Info, AlertTriangle, AlertCircle, Compass, CheckCircle2, User 
+  Network, LayoutDashboard, HelpCircle, Eye, EyeOff, ShieldAlert,
+  Info, AlertTriangle, AlertCircle, Compass, CheckCircle2, User, RefreshCw
 } from 'lucide-react';
 import { NetworkGpsStatusWidget } from './components/NetworkGpsStatusWidget';
 import { motion, AnimatePresence } from 'motion/react';
@@ -70,6 +70,7 @@ export default function App() {
   } = useRouteLogState();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'profile'>('dashboard');
+  const [isSidebarHidden, setIsSidebarHidden] = useState(false);
   const [fcmToast, setFcmToast] = useState<{ title: string; body: string; type: string } | null>(null);
   const [currentPathname, setCurrentPathname] = useState(typeof window !== 'undefined' ? window.location.pathname : '/');
 
@@ -210,6 +211,18 @@ export default function App() {
             )}
 
             <NetworkGpsStatusWidget />
+
+            {!isWidescreen && isSidebarHidden && (
+              <button
+                type="button"
+                onClick={() => setIsSidebarHidden(false)}
+                className="px-3.5 py-2 rounded-xl text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition-all flex items-center gap-1.5 font-bold text-xs cursor-pointer shadow-sm"
+                title="Mostrar Simulador de Login"
+              >
+                <Eye className="w-4 h-4 shrink-0 text-blue-600" />
+                <span>Simulador de Login</span>
+              </button>
+            )}
             
             {/* Core Master Tabs (Dashboard vs Profile vs Docs) */}
             <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-250/20 font-mono text-xs">
@@ -246,7 +259,7 @@ export default function App() {
       <main className={`flex-grow w-full mx-auto p-4 sm:p-6 transition-all duration-300 ${
         currentPathname === '/admin-login'
           ? 'max-w-2xl justify-center items-center py-10'
-          : isWidescreen 
+          : (isWidescreen || isSidebarHidden) 
             ? 'max-w-full px-4 sm:px-8 xl:px-10 flex flex-col gap-6' 
             : 'max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch'
       }`}>
@@ -263,7 +276,7 @@ export default function App() {
         ) : (
           <>
             {/* Left Column: Sider Profile login representation (4 columns) */}
-            {!isWidescreen && (
+            {!isWidescreen && !isSidebarHidden && (
               <div className="lg:col-span-4 h-full">
                 <div className="bg-white rounded-2xl border border-slate-200/80 shadow-md overflow-hidden flex flex-col h-full min-h-[460px]">
                   <UserLoginMenu
@@ -275,13 +288,14 @@ export default function App() {
                     currentUser={currentUser}
                     onLogout={handleLogout}
                     onViewProfile={() => setActiveTab('profile')}
+                    onCollapse={() => setIsSidebarHidden(true)}
                   />
                 </div>
               </div>
             )}
 
             {/* Right Column: Dynamic workspace content (8 columns or full width) */}
-            <div className={`${isWidescreen ? 'w-full' : 'lg:col-span-8'} flex flex-col h-full`}>
+            <div className={`${(isWidescreen || isSidebarHidden) ? 'w-full' : 'lg:col-span-8'} flex flex-col h-full`}>
 
           {/* SUPERVISOR FLOATING WARNING NOTEPAD */}
           {impersonatingUser && (

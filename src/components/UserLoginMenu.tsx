@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { UserRole, RouteUser, Region } from '../types';
 import { REGIONS_LIST, INITIAL_REGIONS } from '../mockData';
-import { ShieldAlert, User, Truck, ClipboardList, LogIn, ChevronRight, UserPlus2, RefreshCw } from 'lucide-react';
+import { ShieldAlert, User, Truck, ClipboardList, LogIn, ChevronRight, UserPlus2, RefreshCw, EyeOff } from 'lucide-react';
 import GoogleAuthButton from './GoogleAuthButton';
 
 interface LoginMenuProps {
@@ -18,9 +18,10 @@ interface LoginMenuProps {
   currentUser: RouteUser | null;
   onLogout: () => void;
   onViewProfile?: () => void;
+  onCollapse?: () => void;
 }
 
-export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogin, onRegister, onReset, currentUser, onLogout, onViewProfile }: LoginMenuProps) {
+export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogin, onRegister, onReset, currentUser, onLogout, onViewProfile, onCollapse }: LoginMenuProps) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -167,6 +168,16 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
           </h1>
           <p className="text-[10px] text-slate-400 mt-1 font-mono">STATUS: Controle de Frotas Ativo</p>
         </div>
+        {onCollapse && (
+          <button
+            type="button"
+            onClick={onCollapse}
+            title="Ocultar Simulador de Login"
+            className="p-1.5 hover:bg-slate-200/60 rounded-lg text-slate-400 hover:text-slate-600 transition-colors cursor-pointer shrink-0"
+          >
+            <EyeOff className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {currentUser ? (

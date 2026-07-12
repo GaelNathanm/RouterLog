@@ -87,6 +87,12 @@ export function useRouteLogState() {
   // Tracking reference for live subscriptions and active logs
   const gpsTickRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Keep a ref of rotas to prevent dependency-loop re-subscriptions in onAuthStateChanged
+  const rotasRef = useRef<Rota[]>(rotas);
+  useEffect(() => {
+    rotasRef.current = rotas;
+  }, [rotas]);
+
   // References for automated GPS coordinate Geofencing tracking
   const previousGeofenceState = useRef<{ [driverId: string]: { [regionId: string]: boolean } }>({});
   const isGeofenceInitDone = useRef(false);
@@ -166,12 +172,16 @@ export function useRouteLogState() {
           } else if (matchedUser.id !== authId) {
             const oldId = matchedUser.id;
             console.log('[Firebase Auth] Migrating user ID from mock to secure auth UUID:', oldId, '->', authId);
-            await deleteCloudUser(oldId);
+            try {
+              await deleteCloudUser(oldId);
+            } catch (err) {
+              console.warn('[Firebase Auth] Could not delete old mock user profile (likely due to security rules delete-permission restriction). Proceeding with migration...', err);
+            }
             matchedUser = { ...matchedUser, id: authId };
             await saveCloudUser(matchedUser);
 
             // Cascade ID updates to ensure assigned rotas are protected under new rules settings
-            const affectedRotas = rotas.filter(r => r.driverId === oldId);
+            const affectedRotas = rotasRef.current.filter(r => r.driverId === oldId);
             for (const r of affectedRotas) {
               await saveCloudRoute({ ...r, driverId: authId });
             }
@@ -238,7 +248,7 @@ export function useRouteLogState() {
     return () => {
       unsubscribe();
     };
-  }, [users, rotas]);
+  }, []);
 
   useEffect(() => {
     if (impersonatingUser) {
@@ -871,12 +881,16 @@ export function useRouteLogState() {
               if (matched.id !== authId) {
                 const oldId = matched.id;
                 console.log('[Firebase Auth] Migrating user ID on Login:', oldId, '->', authId);
-                await deleteCloudUser(oldId);
+                try {
+                  await deleteCloudUser(oldId);
+                } catch (err) {
+                  console.warn('[Firebase Auth] Could not delete old mock user profile on Login. Proceeding...', err);
+                }
                 matched = { ...matched, id: authId };
                 await saveCloudUser(matched);
 
                 // Cascade preassigned routes
-                const affectedRotas = rotas.filter(r => r.driverId === oldId);
+                const affectedRotas = rotasRef.current.filter(r => r.driverId === oldId);
                 for (const r of affectedRotas) {
                   await saveCloudRoute({ ...r, driverId: authId });
                 }
