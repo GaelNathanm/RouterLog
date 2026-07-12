@@ -1,131 +1,448 @@
 {
-  "collections": {
-    "users": {
-      "description": "Lista de usuários, incluindo motoristas, gerentes, vendedores e administradores",
-      "fields": {
-        "id": "string",
-        "name": "string",
-        "email": "string",
-        "phone": "string",
-        "address": "string",
-        "role": "number",
-        "status": "string",
-        "createdAt": "string",
-        "region": "string?",
-        "plate": "string?",
-        "vehicleModel": "string?"
-      }
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile document containing roles and regional assignments",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier matching the Firebase Auth UID"
+        },
+        "name": {
+          "type": "string",
+          "description": "Full name of the user"
+        },
+        "email": {
+          "type": "string",
+          "description": "Corporate email address"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Contact phone number"
+        },
+        "address": {
+          "type": "string",
+          "description": "Home or base address of the operator"
+        },
+        "role": {
+          "type": "integer",
+          "enum": [0, 1, 2, 3],
+          "description": "Strict role: 0 = Admin, 1 = Gerente, 2 = Motorista, 3 = Vendedor"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "suspended", "banned"],
+          "description": "Current authorization status of the user account"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO-8601 creation timestamp"
+        },
+        "region": {
+          "type": "string",
+          "description": "Assigned logistics region (optional for Admins)"
+        },
+        "plate": {
+          "type": "string",
+          "description": "Vehicle plate number (only for Motoristas)"
+        },
+        "vehicleModel": {
+          "type": "string",
+          "description": "Vehicle model name (only for Motoristas)"
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Profile picture storage URL"
+        }
+      },
+      "required": ["id", "name", "email", "phone", "address", "role", "status", "createdAt"]
     },
-    "rotas": {
-      "description": "Rotas de entregas e manifesto de paradas para clientes",
-      "fields": {
-        "id": "string",
-        "driverId": "string",
-        "driverName": "string",
-        "driverPlate": "string",
-        "name": "string",
-        "origin": "string",
-        "originLat": "number",
-        "originLng": "number",
-        "stops": "array",
-        "status": "string",
-        "currentStopIndex": "number",
-        "region": "string",
-        "createdAt": "string",
-        "optimized": "boolean",
-        "sentByGerente": "boolean?"
-      }
+    "Rota": {
+      "title": "Route manifest",
+      "description": "Route assignment, metadata, and stops checklist",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "driverId": {
+          "type": "string"
+        },
+        "driverName": {
+          "type": "string"
+        },
+        "driverPlate": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "origin": {
+          "type": "string"
+        },
+        "originLat": {
+          "type": "number"
+        },
+        "originLng": {
+          "type": "number"
+        },
+        "stops": {
+          "type": "array",
+          "description": "JSON array of stop definitions"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "active", "completed"]
+        },
+        "currentStopIndex": {
+          "type": "integer"
+        },
+        "region": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "optimized": {
+          "type": "boolean"
+        },
+        "sentByGerente": {
+          "type": "boolean"
+        }
+      },
+      "required": ["id", "driverId", "name", "origin", "originLat", "originLng", "stops", "status", "currentStopIndex", "region", "createdAt"]
     },
-    "locations": {
-      "description": "Rastreamento GPS em tempo real de cada condutor operacional",
-      "fields": {
-        "driverId": "string",
-        "lat": "number",
-        "lng": "number",
-        "heading": "number",
-        "speed": "number",
-        "lastUpdated": "string"
-      }
+    "GPSLocation": {
+      "title": "GPS Location Update",
+      "description": "Real-time location and telemetry update for a driver",
+      "type": "object",
+      "properties": {
+        "driverId": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "heading": {
+          "type": "number"
+        },
+        "speed": {
+          "type": "number"
+        },
+        "lastUpdated": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["driverId", "lat", "lng", "heading", "speed", "lastUpdated"]
     },
-    "chats": {
-      "description": "Mensagens de chat em tempo real escopadas por região corporativa",
-      "fields": {
-        "id": "string",
-        "senderId": "string",
-        "senderName": "string",
-        "senderRole": "number",
-        "region": "string",
-        "message": "string",
-        "audioUrl": "string?",
-        "timestamp": "string"
-      }
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "Message log for operational communication channels",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "senderId": {
+          "type": "string"
+        },
+        "senderName": {
+          "type": "string"
+        },
+        "senderRole": {
+          "type": "integer",
+          "enum": [0, 1, 2, 3]
+        },
+        "region": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "audioUrl": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "senderId", "senderName", "senderRole", "region", "message", "timestamp"]
     },
-    "notifications": {
-      "description": "Histórico de alertas do sistema e atualizações de geofence",
-      "fields": {
-        "id": "string",
-        "region": "string",
-        "title": "string",
-        "body": "string",
-        "timestamp": "string",
-        "senderName": "string"
-      }
+    "NotificationLog": {
+      "title": "Notification Log",
+      "description": "Notification dispatch records for system events",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "senderName": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "region", "title", "body", "timestamp", "senderName"]
     },
-    "push_logs": {
-      "description": "Relatório de disparos de notificações push do Firebase Cloud Messaging simulados",
-      "fields": {
-        "id": "string",
-        "title": "string",
-        "body": "string",
-        "targetRole": "any",
-        "targetRegion": "string",
-        "sentCount": "number",
-        "timestamp": "string",
-        "success": "boolean",
-        "type": "string"
-      }
+    "PushLog": {
+      "title": "Push Notification Dispatch Log",
+      "description": "Audit trails for Firebase Cloud Messaging dispatches",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "targetRole": {
+          "type": "integer",
+          "enum": [-1, 0, 1, 2, 3],
+          "description": "Specific target role, -1 signifies all roles broadcast"
+        },
+        "targetRegion": {
+          "type": "string"
+        },
+        "sentCount": {
+          "type": "integer"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "title", "body", "targetRole", "targetRegion", "sentCount", "timestamp", "success", "type"]
     },
-    "audit_logs": {
-      "description": "Log de auditoria das ações administrativas",
-      "fields": {
-        "id": "string",
-        "adminId": "string",
-        "adminName": "string",
-        "action": "string",
-        "targetUserId": "string",
-        "targetUserName": "string",
-        "details": "string",
-        "timestamp": "string"
-      }
+    "AuditLog": {
+      "title": "Administrative Audit Log",
+      "description": "Immutable security log of administrative tasks",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "adminId": {
+          "type": "string"
+        },
+        "adminName": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "targetUserId": {
+          "type": "string"
+        },
+        "targetUserName": {
+          "type": "string"
+        },
+        "details": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "adminId", "adminName", "action", "timestamp"]
     },
-    "performance_logs": {
-      "description": "Métricas de desempenho e telemetria de viagens finalizadas",
-      "fields": {
-        "id": "string",
-        "routeId": "string",
-        "routeName": "string",
-        "driverId": "string",
-        "driverName": "string",
-        "driverPlate": "string",
-        "region": "string",
-        "plannedDistanceKm": "number",
-        "actualDistanceKm": "number",
-        "plannedStopsCount": "number",
-        "completedStopsCount": "number",
-        "startTimestamp": "string",
-        "endTimestamp": "string?",
-        "routeDeviations": "number",
-        "averageTimePerStopMinutes": "number",
-        "status": "string",
-        "stopTelemetry": "array"
-      }
+    "PerformanceLog": {
+      "title": "Performance Log",
+      "description": "Telemetry summaries for completed delivery runs",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "routeId": {
+          "type": "string"
+        },
+        "routeName": {
+          "type": "string"
+        },
+        "driverId": {
+          "type": "string"
+        },
+        "driverName": {
+          "type": "string"
+        },
+        "driverPlate": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "plannedDistanceKm": {
+          "type": "number"
+        },
+        "actualDistanceKm": {
+          "type": "number"
+        },
+        "plannedStopsCount": {
+          "type": "integer"
+        },
+        "completedStopsCount": {
+          "type": "integer"
+        },
+        "startTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "endTimestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "routeDeviations": {
+          "type": "integer"
+        },
+        "averageTimePerStopMinutes": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stopTelemetry": {
+          "type": "array"
+        }
+      },
+      "required": ["id", "routeId", "driverId", "plannedDistanceKm", "actualDistanceKm", "plannedStopsCount", "completedStopsCount", "startTimestamp", "status"]
     },
-    "breadcrumbs": {
-      "description": "Histórico de telemetria e rastro de rotas dos condutores",
-      "fields": {
-        "driverId": "string",
-        "trail": "array"
-      }
+    "Breadcrumbs": {
+      "title": "Driver Breadcrumbs",
+      "description": "Full path history trail of driver coordinates",
+      "type": "object",
+      "properties": {
+        "driverId": {
+          "type": "string"
+        },
+        "trail": {
+          "type": "array"
+        }
+      },
+      "required": ["driverId", "trail"]
+    },
+    "Region": {
+      "title": "Logistics Region",
+      "description": "Logistics operations cluster / branch",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        }
+      },
+      "required": ["id", "name", "lat", "lng"]
+    },
+    "Cliente": {
+      "title": "Cliente",
+      "description": "A customer recipient for route stops",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "address": {
+          "type": "string"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lng": {
+          "type": "number"
+        },
+        "region": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "name", "phone", "address", "lat", "lng", "region"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User records containing profiles, credentials, and roles"
+    },
+    "rotas/{rotaId}": {
+      "schema": { "$ref": "#/entities/Rota" },
+      "description": "Delivery routes containing stopping sequences"
+    },
+    "locations/{driverId}": {
+      "schema": { "$ref": "#/entities/GPSLocation" },
+      "description": "Real-time high-frequency telemetry locations"
+    },
+    "chats/{chatId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Real-time communication channels by region"
+    },
+    "notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationLog" },
+      "description": "Regional geofence alerts and notifications"
+    },
+    "push_logs/{pushLogId}": {
+      "schema": { "$ref": "#/entities/PushLog" },
+      "description": "Firebase Cloud Messaging delivery reports"
+    },
+    "audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Administrative action security audit trail"
+    },
+    "performance_logs/{performanceLogId}": {
+      "schema": { "$ref": "#/entities/PerformanceLog" },
+      "description": "Run metadata summaries and efficiency matrices"
+    },
+    "breadcrumbs/{driverId}": {
+      "schema": { "$ref": "#/entities/Breadcrumbs" },
+      "description": "Telemetry historical breadcrumbs coordinates"
+    },
+    "regions/{regionId}": {
+      "schema": { "$ref": "#/entities/Region" },
+      "description": "Organizational branch coordinates"
+    },
+    "clients/{clientId}": {
+      "schema": { "$ref": "#/entities/Cliente" },
+      "description": "Customers list registered for routes"
     }
   }
 }

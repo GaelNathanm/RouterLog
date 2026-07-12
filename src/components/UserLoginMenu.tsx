@@ -351,7 +351,7 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
               </div>
 
               <div>
-                <label className="block text-slate-500 mb-1">Crie uma Senha (Credenciais Supabase Reais) *</label>
+                <label className="block text-slate-500 mb-1">Crie uma Senha (Credenciais Firebase Reais) *</label>
                 <input 
                   type="password" 
                   value={password}
@@ -434,7 +434,7 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
           <div className="mb-4">
             <span className="text-xs font-bold text-slate-700 block col-span-full">Controle de Sessão Operacional</span>
             <p className="text-[11px] text-slate-400 mt-0.5 leading-relaxed font-sans">
-              Autentique-se via Google, com sua Conta Real Supabase, ou crie seu perfil de operador para acessar o rastreamento e controle logístico.
+              Autentique-se via Google, com sua Conta Real Firebase, ou crie seu perfil de operador para acessar o rastreamento e controle logístico.
             </p>
           </div>
 
@@ -446,7 +446,7 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
 
           {/* Real Credentials Login Form */}
           <form onSubmit={submitCredentialsLogin} className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-sm mb-4 space-y-2.5">
-            <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Acesso Credenciais Reais • Supabase</span>
+            <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Acesso Credenciais Reais • Firebase</span>
             <div className="space-y-1.5">
               <input 
                 type="email" 

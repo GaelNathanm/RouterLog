@@ -21,7 +21,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   AudioPlayer, AudioRecorderButton 
 } from './DashboardUtils';
-import { saveCloudGPSLocation } from '../supabase';
+import { saveCloudGPSLocation } from '../firebase';
 import { useStopConfirmation } from '../useStopConfirmation';
 import { StopConfirmationModal } from './StopConfirmationModal';
 

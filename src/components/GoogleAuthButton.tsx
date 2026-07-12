@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { auth } from '../supabase';
+import { auth } from '../firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { showToast } from '../utils/toast';
 

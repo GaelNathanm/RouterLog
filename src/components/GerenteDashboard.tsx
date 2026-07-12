@@ -20,13 +20,13 @@ import RegionalMap from './RegionalMap';
 import RouteMap from './RouteMap';
 import ClientImporter from './ClientImporter';
 import ClienteManager from './ClienteManager';
+import MapClientes from './MapClientes';
 import WelcomeTutorial from './WelcomeTutorial';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   AudioPlayer, AudioRecorderButton, DriverStatusCard, exportToCSV, exportToPDF 
 } from './DashboardUtils';
-import { SUPABASE_SQL_DDL } from '../supabase';
 import { GUARIBA_LOCATIONS } from './MotoristaDashboard';
 
 // ==========================================
@@ -92,7 +92,6 @@ export function GerenteDashboard({
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
   const [searchTerm, setSearchTerm] = useState('');
   const [isImporterOpen, setIsImporterOpen] = useState(false);
-  const [isSupabaseHelpOpen, setIsSupabaseHelpOpen] = useState(false);
 
   // Dynamic universal search categories matching
   const searchResults = useMemo(() => {
@@ -221,7 +220,7 @@ export function GerenteDashboard({
   }, [gStops, gOriginLat, gOriginLng, gVehicleHeight, gVehicleWeight]);
 
   // Client Management States
-  const [clientSubTab, setClientSubTab] = useState<'database' | 'planner'>('database');
+  const [clientSubTab, setClientSubTab] = useState<'database' | 'planner' | 'map_clientes'>('database');
   const [clientsSearch, setClientsSearch] = useState('');
   const [checkedClientIds, setCheckedClientIds] = useState<string[]>([]);
   
@@ -1165,16 +1164,6 @@ export function GerenteDashboard({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Database Setup Button */}
-                    <button
-                      type="button"
-                      onClick={() => setIsSupabaseHelpOpen(true)}
-                      className="px-3.5 py-1.5 bg-indigo-600/95 hover:bg-indigo-650 text-[10.5px] font-extrabold text-blue-100 rounded-xl transition-all flex items-center gap-1.5 border border-indigo-500/30 cursor-pointer shadow-md shadow-indigo-950/40 uppercase tracking-wider active:scale-95"
-                    >
-                      <Settings className="w-3.5 h-3.5 text-indigo-300 animate-spin-slow" />
-                      <span>Configurar Supabase</span>
-                    </button>
-
                     {/* CSV Export Button */}
                     <button
                       type="button"
@@ -1287,94 +1276,6 @@ export function GerenteDashboard({
                   </div>
                 </div>
               </div>
-
-              {/* Supabase Technical Setup Helper Modal panel */}
-              <AnimatePresence>
-                {isSupabaseHelpOpen && (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 z-50 overflow-y-auto select-text font-sans"
-                  >
-                    <motion.div 
-                      initial={{ scale: 0.95, y: 15 }}
-                      animate={{ scale: 1, y: 0 }}
-                      exit={{ scale: 0.95, y: 15 }}
-                      className="bg-slate-900 border border-slate-800 text-slate-100 rounded-3xl w-full max-w-4xl p-6 shadow-2xl relative flex flex-col max-h-[85vh] overflow-hidden"
-                    >
-                      <button 
-                        type="button"
-                        onClick={() => setIsSupabaseHelpOpen(false)}
-                        className="absolute top-5 right-5 p-2 bg-slate-850 hover:bg-slate-800 border border-slate-800 rounded-xl text-slate-400 hover:text-slate-200 transition-all cursor-pointer"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-
-                      <div className="flex items-center gap-2.5 mb-3 border-b border-slate-800 pb-3">
-                        <div className="p-2 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl">
-                          <Settings className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-base font-extrabold text-slate-100 uppercase tracking-tight">Supabase Setup Guide & DDL Bootstrap</h3>
-                          <p className="text-[11px] text-slate-400 mt-0.5">Siga os passos abaixo para transferir o RouteLog de Offline Sandbox para seu banco PostgreSQL dedicado em segundos.</p>
-                        </div>
-                      </div>
-
-                      <div className="flex-1 overflow-y-auto pr-1 space-y-4 text-xs leading-relaxed text-slate-300">
-                        <div>
-                          <h4 className="font-extrabold text-[11px] text-indigo-400 uppercase tracking-wider font-mono mb-1.5 flex items-center gap-1.5">
-                            <span className="w-5 h-5 bg-indigo-500/10 text-indigo-400 text-[10px] rounded-full flex items-center justify-center font-mono">1</span>
-                            Configurar arquivo local .env
-                          </h4>
-                          <p className="mb-2">Copie e cole as chaves da API do cliente Supabase e declare-as no seu arquivo <code className="bg-slate-950 p-1 rounded border border-slate-850 font-mono text-pink-400 text-[10.5px]">.env</code> no diretório raiz do projeto:</p>
-                          <pre className="bg-slate-950 p-3 rounded-2xl border border-slate-850 font-mono text-[11px] text-amber-300 overflow-x-auto whitespace-pre">VITE_SUPABASE_URL=https://seu-projeto.supabase.co&#10;VITE_SUPABASE_ANON_KEY=seu_anon_token_copiado_do_painel</pre>
-                        </div>
-
-                        <div>
-                          <h4 className="font-extrabold text-[11px] text-indigo-400 uppercase tracking-wider font-mono mb-1.5 flex items-center gap-1.5">
-                            <span className="w-5 h-5 bg-indigo-500/10 text-indigo-400 text-[10px] rounded-full flex items-center justify-center font-mono">2</span>
-                            Criar Tabelas no Banco PostgreSQL do Supabase
-                          </h4>
-                          <p className="mb-2">Navegue até a seção <strong>SQL Editor</strong> do painel do seu projeto Supabase, crie um novo script de consulta (New query), cole o SQL DDL fornecido abaixo e clique em <strong>Run</strong>:</p>
-                          
-                          <div className="relative">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText(SUPABASE_SQL_DDL);
-                                alert('SQL Script copiado para a Área de Transferência!');
-                              }}
-                              className="absolute right-3 top-3 px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-lg text-[9px] transition-all uppercase tracking-wider cursor-pointer"
-                            >
-                              Copiar Código SQL
-                            </button>
-                            <pre className="bg-slate-950 p-3.5 pt-10 rounded-2xl border border-slate-850 font-mono text-[10px] text-emerald-300 overflow-x-auto max-h-[180px] overflow-y-auto whitespace-pre leading-normal select-all">
-                              {SUPABASE_SQL_DDL}
-                            </pre>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-950/40 border border-slate-800 p-3 rounded-xl">
-                          <h4 className="font-extrabold text-[11px] text-indigo-400 uppercase tracking-wider font-mono mb-1">🔥 Por que este design é robusto?</h4>
-                          <p className="text-[11px] text-slate-400">O RouteLog adota um modelo híbrido com controle offline inteligente. Na ausência de chaves de ambiente, ele salva dados no ReactiveLocalStorage e atualiza seu monitor em tempo real sem interrupções. No momento em que você preenche o seu arquivo <code className="bg-slate-950 px-1 rounded font-mono text-pink-400">.env</code> com dados do Supabase, o sistema migra automaticamente para o banco PostgreSQL online e canais de sincronização real-time!</p>
-                        </div>
-                      </div>
-
-                      <div className="border-t border-slate-800 pt-3.5 mt-3 flex items-center justify-between">
-                        <span className="text-[10px] text-slate-400 font-mono">RouteLog Enterprise Database Module</span>
-                        <button
-                          type="button"
-                          onClick={() => setIsSupabaseHelpOpen(false)}
-                          className="px-5 py-2 bg-slate-800 hover:bg-slate-750 text-white font-extrabold rounded-xl transition-all cursor-pointer text-xs uppercase"
-                        >
-                          Fechar
-                        </button>
-                      </div>
-                    </motion.div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
 
               <div className="flex items-center justify-between mb-3 select-none">
                 <span className="text-[11px] font-bold text-slate-500 uppercase font-mono">Modo de Exibição do Monitor:</span>
@@ -1733,6 +1634,17 @@ export function GerenteDashboard({
                     </span>
                   )}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setClientSubTab('map_clientes')}
+                  className={`pb-2.5 font-extrabold text-xs uppercase tracking-wider transition-all border-b-2 cursor-pointer flex items-center gap-1.5 ${
+                    clientSubTab === 'map_clientes'
+                      ? 'border-indigo-600 text-indigo-700 font-black'
+                      : 'border-transparent text-slate-400 hover:text-slate-600'
+                  }`}
+                >
+                  🗺️ Map Clientes
+                </button>
               </div>
 
               {clientSubTab === 'database' ? (
@@ -1759,7 +1671,7 @@ export function GerenteDashboard({
                   gOriginLat={gOriginLat}
                   gOriginLng={gOriginLng}
                 />
-              ) : (
+              ) : clientSubTab === 'planner' ? (
                 /* ==============================================================
                    SUBTAB 2: ORIGINAL PLANNER CONTAINER WITH SECTIONS A + B
                    ============================================================== */
@@ -2361,6 +2273,8 @@ export function GerenteDashboard({
                   </div>
                 </div>
               </div>
+              ) : (
+                <MapClientes region={region} />
               )}
 
               {/* FULL-SCREEN SECURE CLIENT IMPORTER MODAL */}

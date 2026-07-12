@@ -3,9 +3,8 @@
  * Seamlessly acts as the single source of truth for high-precision logistics sync.
  */
 
-import { initializeApp } from 'firebase/app';
 import { 
-  getFirestore, doc, collection, setDoc, deleteDoc, getDocs, onSnapshot, query, arrayUnion, getDocFromServer,
+  doc, collection, setDoc, deleteDoc, getDocs, onSnapshot, query, arrayUnion, getDocFromServer,
   getDoc, where, limit
 } from 'firebase/firestore';
 import { 
@@ -17,14 +16,8 @@ import {
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
   INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
 } from './mockData';
-import firebaseConfig from '../firebase-applet-config.json';
-
-import { getAuth } from 'firebase/auth';
-
-// Initialize Firebase Core and Firestore Named Database
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth(app);
+import { db, auth } from './firebaseConfig';
+export { db, auth };
 
 // Export null supabase to avoid compiler errors on legacy checks
 export const supabase = null;
@@ -69,12 +62,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log('[Firestore] Connected successfully to named database:', firebaseConfig.firestoreDatabaseId);
+    console.log('[Firestore] Connected successfully to the named database.');
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('[Firestore] Please check your Firebase configuration or internet connection.');
     } else {
-      console.log('[Firestore] Initialized with endpoint:', firebaseConfig.projectId);
+      console.log('[Firestore] Initialized successfully.');
     }
   }
 }

@@ -1,8 +1,25 @@
+# Dependencies and Build Directories
 node_modules/
 build/
 dist/
 coverage/
+
+# OS and Log files
 .DS_Store
 *.log
-.env*
+
+# Sensitive Credentials and Environments
+.env
+.env.local
+.env.*.local
+*.local
+
+# Firebase Private Keys and JSON credentials
+*credentials*.json
+firebase-key.json
+firebase-adminsdk.json
+*.private.json
+/serviceAccountKey.json
+
+# Keep track of example environment configurations
 !.env.example

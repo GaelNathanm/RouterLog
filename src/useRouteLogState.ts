@@ -16,7 +16,7 @@ import {
   resetCloudDatabaseAll, saveCloudRegion, deleteCloudRegion, 
   subscribeToCollection, deleteCloudUser, saveCloudClient, deleteCloudClient, auth,
   getCloudUser, getCloudUserByEmail
-} from './supabase';
+} from './firebase';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
   ChatMessage, NotificationLog, AuditLogEntry,

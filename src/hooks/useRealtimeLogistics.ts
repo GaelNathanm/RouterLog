@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { subscribeToCollection } from '../supabase';
+import { subscribeToCollection } from '../firebase';
 import { ChatMessage, GPSLocation } from '../types';
 
 export function useRealtimeLogistics(

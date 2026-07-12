@@ -1,101 +1,210 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // -------------------------------------------------------------
+    // 1. GLOBAL SAFETY CATCH-ALL DEFAULT-DENY NET
+    // -------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // -------------------------------------------------------------
+    // 2. REUSABLE AND RESOURCE-SAFE HELPERS
+    // -------------------------------------------------------------
     
-    // Função auxiliar: Verifica se o usuário está autenticado
-    function isAuthed() {
+    // Auth Check (Fastest Static Check)
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    // Função auxiliar: Busca o perfil do usuário logado no banco de dados
+    // Identity Ownership Check (Fastest Static Check)
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Fetch User Profile Document (Relational Read)
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // Função auxiliar: Verifica se o usuário é Administrador
+    // Check if the current user has the Admin role (0 = Admin)
     function isAdmin() {
-      return isAuthed() && (
-        getUserData().role == 0 || 
-        getUserData().role == '0' || 
-        getUserData().role == 'Admin'
-      );
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == 0;
     }
 
-    // Função auxiliar: Verifica se o usuário é Gerente
+    // Check if the current user has the Gerente role (1 = Gerente)
     function isGerente() {
-      return isAuthed() && (
-        getUserData().role == 1 || 
-        getUserData().role == '1' || 
-        getUserData().role == 'Gerente'
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == 1;
+    }
+
+    // Check if the current user has the Motorista role (2 = Motorista)
+    function isMotorista() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == 2;
+    }
+
+    // Check if the current user has the Vendedor role (3 = Vendedor)
+    function isVendedor() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             getUserData().role == 3;
+    }
+
+    // Validate if an ID has a standard robust character sequence format and bounds
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // -------------------------------------------------------------
+    // 3. SECURED COLLECTIONS DEFINITIONS
+    // -------------------------------------------------------------
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      
+      // Basic registration: can register self as non-admin, admins must be created by an existing admin
+      allow create: if isSignedIn() && (
+        (isOwner(userId) && request.resource.data.role != 0) || 
+        isAdmin()
+      );
+      
+      // Standard users can update their own non-RBAC fields, while Admins have full access
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (isOwner(userId) && 
+         request.resource.data.role == resource.data.role && 
+         request.resource.data.status == resource.data.status)
+      );
+      
+      // Deletion of profiles is strictly reserved to the Admin Role
+      allow delete: if isAdmin();
+    }
+
+    // Routes (Rotas) Collection
+    match /rotas/{rotaId} {
+      allow read: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        isVendedor() ||
+        (isMotorista() && resource.data.driverId == request.auth.uid)
+      );
+      
+      // Creating routes is restricted to Logistics Managers or Admins
+      allow create: if isSignedIn() && (isAdmin() || isGerente());
+      
+      // Updating routes is for Managers/Admins, or Motoristas updating progress of their own assigned route
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        (isMotorista() && 
+         resource.data.driverId == request.auth.uid && 
+         request.resource.data.driverId == resource.data.driverId)
+      );
+      
+      allow delete: if isSignedIn() && (isAdmin() || isGerente());
+    }
+
+    // Real-Time Locations Collection
+    match /locations/{driverId} {
+      allow read: if isSignedIn();
+      
+      // Drivers can only update their own locations, Admins/Gerentes can manage all
+      allow write: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        (isMotorista() && request.auth.uid == driverId)
       );
     }
 
-    // Regras para a Coleção de Usuários
-    match /users/{userId} {
-      allow read, create, update, delete: if isAuthed();
+    // Historical Breadcrumbs Location Trail Collection
+    match /breadcrumbs/{driverId} {
+      allow read: if isSignedIn();
+      
+      // Drivers can only write to their own breadcrumb document, Admins/Gerentes can manage all
+      allow write: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        (isMotorista() && request.auth.uid == driverId)
+      );
     }
 
-    // Regras para a Coleção de Regiões
-    match /regions/{regionId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed() && (isAdmin() || isGerente());
-    }
-
-    // Regras para a Coleção de Rotas
-    match /rotas/{rotaId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
-    }
-
-    // Regras para Auditoria e Logs (Imutabilidade total)
-    match /audit_logs/{logId} {
-      allow read: if isAuthed() && isAdmin();
-      allow create: if isAuthed(); // Qualquer ação do sistema pode gerar um log
-      allow update, delete: if false; // NINGUÉM pode alterar ou deletar logs históricos
-    }
-
-    // Regras para Localização em Tempo Real
-    match /locations/{locationId} {
-      allow read: if isAuthed();
-      // O motorista só pode atualizar a sua própria localização, ou Admin
-      allow write: if isAuthed() && (request.auth.uid == locationId || isAdmin());
-    }
-
-    // Regras para o Canal de Chat
+    // Chats Messages Collection
     match /chats/{chatId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
+      allow read: if isSignedIn();
+      
+      // Injects are secure: senderId in payload must strictly match the authenticated UID
+      allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
-    // Regras para Notificações e Alertas
+    // System Notifications Collection
     match /notifications/{notificationId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
+      allow read: if isSignedIn();
+      
+      // Only Admins or Logistics Managers can dispatch announcements/alerts
+      allow write: if isSignedIn() && (isAdmin() || isGerente());
     }
 
-    // Regras para Logs de Envio Push
+    // Push Dispatch Reports Collection
     match /push_logs/{pushLogId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isAdmin() || isGerente());
     }
 
-    // Regras para Relatórios de Performance
+    // Administrative Audit Log Collection
+    match /audit_logs/{logId} {
+      allow read: if isSignedIn() && (isAdmin() || isGerente());
+      
+      // Allow create if user is signed in and is Admin/Gerente, or they are creating a log with their own UID as adminId
+      allow create: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        request.resource.data.adminId == request.auth.uid
+      );
+      
+      // Updates and deletes are restricted to master Admins
+      allow update, delete: if isAdmin();
+    }
+
+    // Travel Performance Logs Collection
     match /performance_logs/{performanceLogId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
+      allow read: if isSignedIn();
+      
+      // Logs can be registered or updated by the driver, Manager, or Admin
+      allow create: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        (isMotorista() && request.resource.data.driverId == request.auth.uid)
+      );
+      
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        isGerente() || 
+        (isMotorista() && 
+         resource.data.driverId == request.auth.uid && 
+         request.resource.data.driverId == request.auth.uid)
+      );
+      
+      allow delete: if isAdmin();
     }
 
-    // Regras para Trilhas de Navegação (Breadcrumbs)
-    match /breadcrumbs/{breadcrumbId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
+    // Regions Collection
+    match /regions/{regionId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isAdmin() || isGerente());
     }
 
-    // Regras para o Banco de Clientes
+    // Clients Collection
     match /clients/{clientId} {
-      allow read: if isAuthed();
-      allow write: if isAuthed();
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && (isAdmin() || isGerente() || isVendedor());
     }
   }
 }
-  
