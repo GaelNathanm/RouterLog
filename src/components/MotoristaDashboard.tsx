@@ -441,6 +441,15 @@ export function MotoristaDashboard({
   }, [performanceLogs, user.id, myCompletedRoutes]);
 
   const [isSharingLocation, setIsSharingLocation] = useState(true);
+  const [gpsFrequency, setGpsFrequency] = useState<number>(() => {
+    const saved = localStorage.getItem('gps_send_frequency');
+    return saved ? parseInt(saved, 10) : 30000;
+  });
+  const lastGpsSentTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    localStorage.setItem('gps_send_frequency', gpsFrequency.toString());
+  }, [gpsFrequency]);
 
   // Delivery confirmation action
   const handleConfirmDelivery = async (routeId: string, stopId: string) => {
@@ -566,6 +575,12 @@ export function MotoristaDashboard({
     if (typeof navigator !== 'undefined' && 'geolocation' in navigator) {
       watchId = navigator.geolocation.watchPosition(
         async (position) => {
+          const now = Date.now();
+          if (now - lastGpsSentTimeRef.current < gpsFrequency) {
+            return; // Skip sending to save battery and network data
+          }
+          lastGpsSentTimeRef.current = now;
+
           const lat = position.coords.latitude;
           const lng = position.coords.longitude;
           const speed = position.coords.speed !== null ? Math.round(position.coords.speed * 3.6) : (45 + Math.floor(Math.random() * 10)); // convert to km/h or simulated
@@ -603,7 +618,7 @@ export function MotoristaDashboard({
         navigator.geolocation.clearWatch(watchId);
       }
     };
-  }, [isSharingLocation, activeRoute?.id, user.id]);
+  }, [isSharingLocation, activeRoute?.id, user.id, gpsFrequency]);
 
   const handleSuggestAIPrediction = async () => {
     setIsLoadingAI(true);
@@ -1007,6 +1022,27 @@ export function MotoristaDashboard({
             <Compass className={`w-3.5 h-3.5 ${isSharingLocation ? 'animate-spin' : 'text-rose-500'}`} style={{ animationDuration: '4s' }} />
             {isSharingLocation ? 'Compartilhando Localização' : 'Compartilhar Localização'}
           </button>
+
+          {/* GPS Sending Frequency Selector */}
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl shadow-xs text-[10px] font-bold text-slate-700">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-slate-500" />
+            <span className="text-slate-500 uppercase tracking-wider text-[9px]">Sinc GPS:</span>
+            <select
+              id="gps-freq-select"
+              value={gpsFrequency}
+              onChange={(e) => setGpsFrequency(Number(e.target.value))}
+              className="bg-white border border-slate-200 rounded px-1.5 py-0.5 text-[10px] text-slate-800 font-extrabold focus:outline-none cursor-pointer focus:ring-1 focus:ring-indigo-500"
+            >
+              <option value={30000}>30 Segundos</option>
+              <option value={60000}>1 Minuto</option>
+              <option value={300000}>5 Minutos</option>
+            </select>
+            {gpsFrequency >= 60000 && (
+              <span className="text-[9px] text-emerald-600 font-extrabold bg-emerald-50 border border-emerald-100 px-1.5 py-0.5 rounded-lg animate-pulse">
+                🔋 Economia de Bateria
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1457,16 +1493,28 @@ export function MotoristaDashboard({
 
                               {/* Action Row */}
                               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-blue-100/60">
-                                {/* GO/NAVIGATE */}
+                                {/* GO/NAVIGATE - GOOGLE MAPS */}
                                 <button
                                   type="button"
                                   onClick={() => {
                                     window.open(`https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}`, '_blank');
                                   }}
-                                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold px-4 py-2 rounded-full text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 transition-all"
+                                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold px-3 py-2 rounded-full text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 transition-all"
                                 >
                                   <Navigation className="w-3.5 h-3.5 text-white fill-white" />
-                                  Go
+                                  Google Maps
+                                </button>
+
+                                {/* GO/NAVIGATE - WAZE */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    window.open(`https://waze.com/ul?ll=${st.lat},${st.lng}&navigate=yes`, '_blank');
+                                  }}
+                                  className="bg-sky-500 hover:bg-sky-600 text-white font-extrabold px-3 py-2 rounded-full text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 transition-all"
+                                >
+                                  <Map className="w-3.5 h-3.5 text-white fill-white" />
+                                  Waze
                                 </button>
 
                                 {/* ACTIONS EXTENDED (...) */}
