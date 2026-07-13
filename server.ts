@@ -515,13 +515,50 @@ app.post('/api/gemini/suggest-stops', async (req, res) => {
 
     return res.json(suggestedData);
   } catch (error: any) {
-    console.error('Erro na chamada da API do Gemini:', error);
-    return res.status(500).json({ error: error.message || 'Falha na análise inteligente.' });
+    console.warn('[Gemini Suggest Fallback] Gemini API indisponível ou erro na análise. Usando fallback de presets locais...', error.message || error);
+    try {
+      const { region, presets } = req.body;
+      const cleanRegion = region || 'Geral';
+      
+      const suggestedStops = (presets && presets.length > 0)
+        ? presets.slice(0, 3).map((p: any) => ({
+            clientName: p.name || 'Cliente Regional',
+            address: p.address || 'Endereço Padrão',
+            lat: p.lat || -18.852,
+            lng: p.lng || -41.952,
+            clientWhatsApp: '5533991234567'
+          }))
+        : [
+            {
+              clientName: 'Supermercado Central',
+              address: 'Av. Israel Pinheiro, 2500 - Centro',
+              lat: -18.852,
+              lng: -41.952,
+              clientWhatsApp: '5533991234567'
+            },
+            {
+              clientName: 'Drogaria do Povo',
+              address: 'Av. Minas Gerais, 980 - Nossa Senhora das Graças',
+              lat: -18.858,
+              lng: -41.939,
+              clientWhatsApp: '5533991234567'
+            }
+          ];
+
+      return res.json({
+        routeName: `Sugestão Inteligente (Fallback) - ${cleanRegion}`,
+        stops: suggestedStops
+      });
+    } catch (fallbackError: any) {
+      console.error('Falha crítica ao gerar sugestão padrão de fallback:', fallbackError);
+      return res.status(500).json({ error: 'Erro crítico na geração de sugestões.' });
+    }
   }
 });
 
 // API endpoint for Gemini route sequence optimization (TSP)
 app.post('/api/gemini/optimize-route', async (req, res) => {
+  const { stops, originLat, originLng } = req.body;
   try {
     if (!ai) {
       return res.status(500).json({
@@ -529,7 +566,6 @@ app.post('/api/gemini/optimize-route', async (req, res) => {
       });
     }
 
-    const { stops, originLat, originLng } = req.body;
     if (!stops || stops.length === 0) {
       return res.json({ stops: [] });
     }
@@ -609,8 +645,67 @@ app.post('/api/gemini/optimize-route', async (req, res) => {
     });
 
   } catch (error: any) {
-    console.error('Erro na otimização de rota com Gemini:', error);
-    return res.status(500).json({ error: error.message || 'Falha na otimização inteligente.' });
+    console.warn('[Gemini Optimize Fallback] Otimizador Gemini indisponível (503/Error). Iniciando fallback...', error.message || error);
+    try {
+      const mapKey = process.env.GOOGLE_MAPS_PLATFORM_KEY || process.env.GOOGLE_DIRECTIONS_API_KEY;
+      if (mapKey && mapKey !== 'YOUR_API_KEY' && mapKey.trim() !== '') {
+        const waypointsArray = stops.map((s: any) => `${s.lat},${s.lng}`);
+        const waypointsStr = `optimize:true|${waypointsArray.join('|')}`;
+        const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${originLat},${originLng}&destination=${originLat},${originLng}&waypoints=${encodeURIComponent(waypointsStr)}&key=${mapKey}`;
+        
+        console.log(`[Gemini Fallback -> Google Directions] Executando otimização via API do Google...`);
+        const response = await fetch(url);
+        if (response.ok) {
+          const data = await response.json();
+          if (data.status === 'OK' && data.routes && data.routes[0]) {
+            const order: number[] = data.routes[0].waypoint_order;
+            const optimizedStops = order.map(index => stops[index]);
+            return res.json({ 
+              stops: optimizedStops,
+              source: 'Google Directions API (Fallback de Gemini)'
+            });
+          }
+        }
+      }
+
+      // Backend Nearest-Neighbor TSP fallback
+      console.log(`[Gemini Fallback -> TSP] Executando algoritmo TSP local para fallback...`);
+      const sorted: any[] = [];
+      const remaining = [...stops];
+      let currLat = originLat;
+      let currLng = originLng;
+
+      while (remaining.length > 0) {
+        let nearestIdx = 0;
+        let minDistance = Infinity;
+
+        for (let i = 0; i < remaining.length; i++) {
+          const dLat = remaining[i].lat - currLat;
+          const dLng = remaining[i].lng - currLng;
+          const d = dLat * dLat + dLng * dLng;
+          if (d < minDistance) {
+            minDistance = d;
+            nearestIdx = i;
+          }
+        }
+
+        const nextStop = remaining.splice(nearestIdx, 1)[0];
+        sorted.push(nextStop);
+        currLat = nextStop.lat;
+        currLng = nextStop.lng;
+      }
+
+      return res.json({ 
+        stops: sorted,
+        source: 'RouteLog TSPOptimizer (Fallback local de Gemini)'
+      });
+    } catch (fallbackError: any) {
+      console.error('Falha crítica em todos os otimizadores de fallback:', fallbackError);
+      return res.json({
+        stops: stops,
+        source: 'Sem Otimização (Erro crítico)'
+      });
+    }
   }
 });
 

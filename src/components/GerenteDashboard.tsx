@@ -2059,7 +2059,7 @@ export function GerenteDashboard({
                               driverPlate: (driverObj as any).plate || 'RTL-1234',
                               region: region,
                               optimized: true,
-                              sentByGerente: true
+                              sentByGerente: false
                             });
 
                             // Send push alerts to driver automatically
@@ -2068,7 +2068,7 @@ export function GerenteDashboard({
                               UserRole.MOTORISTA, 
                               region, 
                               'Nova Rota Atribuída 📦', 
-                              `Olá ${driverObj.name}: O gestor operacional inseriu a rota "${gRouteName}" com ${gStops.length} paradas na sua aba Rota REC.`
+                              `Olá ${driverObj.name}: O gestor operacional inseriu a rota "${gRouteName}" com ${gStops.length} paradas na sua aba Minhas Rotas.`
                             );
                             alert(`Sucesso! Rota despachada e notificação enviada no celular de ${driverObj.name}!`);
                           }

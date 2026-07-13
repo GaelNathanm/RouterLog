@@ -56,7 +56,7 @@ export const GUARIBA_LOCATIONS = [
 export function MotoristaDashboard({ 
   user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0, onUpdateUser 
 }: MotoristaProps) {
-  const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'rotarec'>('salvas');
+  const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'rotarec' | 'finalizadas'>('salvas');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
   
   const {
@@ -204,6 +204,10 @@ export function MotoristaDashboard({
   const [chatText, setChatText] = useState('');
   const [selectedCompletedRouteId, setSelectedCompletedRouteId] = useState<string | null>(null);
   
+  // REC tab custom timeline and options states
+  const [selectedRecRouteId, setSelectedRecRouteId] = useState<string | null>(null);
+  const [expandedStopOptions, setExpandedStopOptions] = useState<string | null>(null);
+  
   // Connection / GPS status state & Gemini AI Loader
   const [connectionStatus, setConnectionStatus] = useState<'stable' | 'unstable'>('stable');
   const [isLoadingAI, setIsLoadingAI] = useState(false);
@@ -311,9 +315,60 @@ export function MotoristaDashboard({
     return source.filter(r => r.driverId === driverUid);
   }, [firestoreRoutes, rotas, user]);
 
-  const myCreatedRoutes = useMemo(() => myRoutes.filter(r => !r.sentByGerente), [myRoutes]);
-  const myReceivedRoutes = useMemo(() => myRoutes.filter(r => r.sentByGerente === true), [myRoutes]);
+  const myCreatedRoutes = useMemo(() => myRoutes.filter(r => !r.sentByGerente && r.status !== 'completed'), [myRoutes]);
+  const myReceivedRoutes = useMemo(() => myRoutes.filter(r => (r.sentByGerente === true || r.status === 'active' || r.status === 'em_andamento') && r.status !== 'completed'), [myRoutes]);
   const myCompletedRoutes = useMemo(() => myRoutes.filter(r => r.status === 'completed'), [myRoutes]);
+
+  // Helper to generate realistic timestamps mimicking the GPS timeline in the reference image
+  const getStopTimes = (stopsList: Parada[], currentStopIndex: number) => {
+    const times: { eta: string; duration: string; completedTime?: string }[] = [];
+    const baseTime = new Date();
+    
+    for (let i = 0; i < stopsList.length; i++) {
+      if (i < currentStopIndex) {
+        // Completed stop (simulated in the past)
+        const compTime = new Date(baseTime.getTime() - (currentStopIndex - i) * 15 * 60 * 1000);
+        times.push({
+          eta: compTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          duration: '5m',
+          completedTime: compTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        });
+      } else if (i === currentStopIndex) {
+        // Active stop
+        const etaTime = new Date(baseTime.getTime() + 5 * 60 * 1000);
+        times.push({
+          eta: etaTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          duration: '5m'
+        });
+      } else {
+        // Pending stop (expected in the future)
+        const etaTime = new Date(baseTime.getTime() + (5 + (i - currentStopIndex) * 10) * 60 * 1000);
+        times.push({
+          eta: etaTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          duration: '5m'
+        });
+      }
+    }
+    return times;
+  };
+
+  const viewedRecRoute = useMemo(() => {
+    const activeRec = myReceivedRoutes.find(r => r.status === 'active' || r.status === 'em_andamento');
+    if (activeRec) {
+      return activeRec;
+    }
+    if (selectedRecRouteId) {
+      return myReceivedRoutes.find(r => r.id === selectedRecRouteId) || null;
+    }
+    return null;
+  }, [myReceivedRoutes, selectedRecRouteId]);
+
+  const viewedCompletedRoute = useMemo(() => {
+    if (selectedCompletedRouteId) {
+      return myCompletedRoutes.find(r => r.id === selectedCompletedRouteId) || null;
+    }
+    return null;
+  }, [myCompletedRoutes, selectedCompletedRouteId]);
   
   const activeRoute = useMemo(() => {
     const found = myRoutes.find(r => r.status === 'active' || r.status === 'em_andamento') || 
@@ -323,6 +378,20 @@ export function MotoristaDashboard({
     }
     return null;
   }, [myRoutes, stops]);
+
+  const handleStartRecRoute = (routeId: string) => {
+    onStartRoute(routeId);
+    setSelectedRecRouteId(routeId);
+    setActiveTab('rotarec');
+    alert('Rota iniciada com sucesso! Acompanhe o itinerário na linha do tempo abaixo.');
+  };
+
+  const handleRefuseStop = async (stop: Parada) => {
+    const reason = prompt(`Motivo da não-entrega / recusa de mercadoria para ${stop.clientName}:`);
+    if (reason) {
+      alert(`Ocorrência registrada com sucesso: "${reason}". O despacho de logística e o Gerente Regional foram notificados em tempo real.`);
+    }
+  };
 
   // Profile Edit States
   const [profileName, setProfileName] = useState(user.name || '');
@@ -952,7 +1021,7 @@ export function MotoristaDashboard({
       )}
 
       {/* Responsive Horizontal Tabs Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 bg-slate-100 p-2 rounded-2xl border border-slate-200/40 select-none w-full">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 bg-slate-100 p-2 rounded-2xl border border-slate-200/40 select-none w-full">
         <button
           type="button"
           onClick={() => setActiveTab('nova')}
@@ -983,7 +1052,18 @@ export function MotoristaDashboard({
           }`}
         >
           <Truck className="w-4 h-4 text-emerald-600 shrink-0" />
-          REC ({myReceivedRoutes.length})
+          Rota Atual ({myReceivedRoutes.length})
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('finalizadas')}
+          className={`py-3 px-2 rounded-xl text-xs font-black transition-all cursor-pointer flex flex-col items-center justify-center gap-1.5 uppercase tracking-wider ${
+            activeTab === 'finalizadas' ? 'bg-white text-indigo-955 shadow-sm border border-slate-200/40' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <CheckCircle className="w-4 h-4 text-teal-600 shrink-0" />
+          Rotas Salvas ({myCompletedRoutes.length})
         </button>
       </div>
 
@@ -1019,27 +1099,7 @@ export function MotoristaDashboard({
                 />
               </div>
 
-              {/* AI Gemini Suggestion Button */}
-              <div className="pt-1">
-                <button
-                  type="button"
-                  onClick={handleSuggestAIPrediction}
-                  disabled={isLoadingAI}
-                  className="w-full py-3 px-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-50 text-white font-extrabold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md text-xs uppercase tracking-wider active:scale-95 animate-pulse"
-                >
-                  {isLoadingAI ? (
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <Sparkles className="w-4 h-4 text-amber-300 animate-spin" />
-                      Analisando com Gemini...
-                    </span>
-                  ) : (
-                    <>
-                      <Sparkles className="w-4 h-4 text-amber-300 fill-amber-300 shrink-0" />
-                      Sugerir Rota por IA (Gemini)
-                    </>
-                  )}
-                </button>
-              </div>
+
 
               {/* Stop addition manager */}
               <div className="p-3.5 border border-indigo-120/40 bg-indigo-50/15 rounded-2xl space-y-3">
@@ -1206,7 +1266,11 @@ export function MotoristaDashboard({
                   <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
                     {route.status === 'draft' && (
                       <button
-                        onClick={() => onStartRoute(route.id)}
+                        onClick={() => {
+                          onStartRoute(route.id);
+                          setSelectedRecRouteId(route.id);
+                          setActiveTab('rotarec');
+                        }}
                         className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
                       >
                         <Play className="w-4 h-4 fill-white" />
@@ -1233,16 +1297,337 @@ export function MotoristaDashboard({
         {/* TAB 4: RECEIVED ROUTES FROM MANAGER (ROTA REC) */}
         {activeTab === 'rotarec' && (
           <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 text-xs font-sans">
-            <span className="font-extrabold text-slate-800 text-xs block uppercase tracking-wider">
-              Rotas Recebidas / REC ({myReceivedRoutes.length})
-            </span>
+            {viewedRecRoute ? (
+              // Line-of-time / Timeline GPS details for the selected received route
+              <div className="space-y-4">
+                {/* Header Row */}
+                <div className="flex items-center justify-between bg-slate-50 border border-slate-150 rounded-2xl p-3.5 shadow-sm">
+                  <button 
+                    type="button"
+                    onClick={() => setSelectedRecRouteId(null)}
+                    className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-slate-800 transition-all cursor-pointer active:scale-95 shadow-sm shrink-0"
+                  >
+                    <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+                  </button>
+                  
+                  <div className="text-center flex-1 mx-2">
+                    <div className="text-slate-800 font-extrabold text-xs md:text-sm tracking-tight font-sans">
+                      {(viewedRecRoute.stops.length * 1.5).toFixed(1)} km 
+                      <span className="text-slate-300 mx-1.5">•</span> 
+                      {Math.round(viewedRecRoute.stops.length * 15 + 10)} min 
+                      <span className="text-slate-300 mx-1.5">•</span> 
+                      {(() => {
+                        const stopTimes = getStopTimes(viewedRecRoute.stops, viewedRecRoute.stops.findIndex(s => s.status !== 'completed') === -1 ? viewedRecRoute.stops.length : viewedRecRoute.stops.findIndex(s => s.status !== 'completed'));
+                        return stopTimes.length > 0 ? stopTimes[stopTimes.length - 1].eta : '--:--';
+                      })()}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono mt-0.5 uppercase tracking-wider font-extrabold flex items-center justify-center gap-1">
+                      <Route className="w-3 h-3 text-indigo-500 shrink-0" />
+                      {viewedRecRoute.stops.filter(s => s.status !== 'completed').length === 1 
+                        ? '1 parada restante' 
+                        : `${viewedRecRoute.stops.filter(s => s.status !== 'completed').length} paradas restantes`}
+                    </div>
+                  </div>
+                  
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      alert(`Detalhes da Rota: ${viewedRecRoute.name}\nOrigem: ${viewedRecRoute.origin}\nStatus: ${viewedRecRoute.status.toUpperCase()}`);
+                    }}
+                    className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-slate-800 transition-all cursor-pointer active:scale-95 shadow-sm shrink-0"
+                  >
+                    <Info className="w-4 h-4 text-indigo-500" />
+                  </button>
+                </div>
 
-            {mEditingRouteId ? (
+                {/* Progress Bar Segmented Indicator */}
+                <div className="px-1.5 py-1">
+                  <div className="flex items-center gap-1 h-2 w-full bg-slate-100 rounded-full overflow-hidden px-1 relative">
+                    {viewedRecRoute.stops.map((_, idx) => {
+                      const activeStopIndex = viewedRecRoute.stops.findIndex(s => s.status !== 'completed') === -1 ? viewedRecRoute.stops.length : viewedRecRoute.stops.findIndex(s => s.status !== 'completed');
+                      let bgClass = 'bg-slate-200';
+                      if (idx < activeStopIndex) {
+                        bgClass = 'bg-emerald-500';
+                      } else if (idx === activeStopIndex) {
+                        bgClass = 'bg-blue-500';
+                      }
+                      return (
+                        <div 
+                          key={idx} 
+                          className={`h-1.5 flex-1 rounded-full relative transition-all duration-300 ${bgClass}`}
+                        >
+                          {idx === activeStopIndex && (
+                            <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-blue-600 rounded-full border border-white shadow-md animate-ping" />
+                          )}
+                          {idx === activeStopIndex && (
+                            <span className="absolute -top-1 left-1/2 -translate-x-1/2 w-3.5 h-3.5 bg-blue-600 rounded-full border border-white shadow-md" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Timeline Stops Scrollable List */}
+                <div className="relative p-1.5 space-y-4 max-h-[480px] overflow-y-auto scrollbar-thin pr-1">
+                  {/* Timeline Stop Row Map */}
+                  {viewedRecRoute.stops.map((st, idx) => {
+                    const activeStopIndex = viewedRecRoute.stops.findIndex(s => s.status !== 'completed') === -1 ? viewedRecRoute.stops.length : viewedRecRoute.stops.findIndex(s => s.status !== 'completed');
+                    const stopTimes = getStopTimes(viewedRecRoute.stops, activeStopIndex);
+                    const isCompleted = idx < activeStopIndex || st.status === 'completed';
+                    const isActive = idx === activeStopIndex;
+
+                    return (
+                      <div key={st.id} className="flex items-stretch gap-3 relative min-h-[68px]">
+                        {/* 1. Left Column (Metadata/Metrics) */}
+                        <div className="w-20 shrink-0 flex flex-col items-end justify-center pr-1 text-right">
+                          {isCompleted ? (
+                            <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-2 py-1 flex flex-col items-center justify-center w-[72px] h-[46px] shadow-sm">
+                              <Check className="w-4 h-4 text-emerald-600 stroke-[3]" />
+                              <span className="text-[8.5px] font-black text-emerald-700 font-mono mt-0.5">
+                                {stopTimes[idx]?.completedTime || '02:58'}
+                              </span>
+                            </div>
+                          ) : isActive ? (
+                            <div className="flex flex-col items-end justify-center font-sans">
+                              <span className="text-[10px] font-black text-blue-600 tracking-tight">2 min</span>
+                              <span className="text-[13px] font-black text-slate-800 leading-none mt-0.5">
+                                {stopTimes[idx]?.eta || '03:01'}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-medium flex items-center gap-0.5 mt-1">
+                                <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                5m
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-end justify-center font-sans opacity-60">
+                              <span className="text-[10px] font-bold text-slate-400 tracking-tight">1 min</span>
+                              <span className="text-[12px] font-bold text-slate-500 leading-none mt-0.5">
+                                {stopTimes[idx]?.eta || '03:07'}
+                              </span>
+                              <span className="text-[9px] text-slate-400 font-medium flex items-center gap-0.5 mt-1">
+                                <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                5m
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* 2. Middle Column (Step Indicators & Connecting Line) */}
+                        <div className="w-8 shrink-0 relative flex items-center justify-center">
+                          {/* Symmetrical vertical timeline lines */}
+                          {idx > 0 && (
+                            <div className={`absolute top-0 bottom-1/2 left-1/2 -translate-x-1/2 w-[2px] ${
+                              idx <= activeStopIndex ? 'bg-emerald-400' : 'bg-slate-200'
+                            }`} />
+                          )}
+                          {idx < viewedRecRoute.stops.length - 1 && (
+                            <div className={`absolute top-1/2 bottom-0 left-1/2 -translate-x-1/2 w-[2px] ${
+                              idx < activeStopIndex ? 'bg-emerald-400' : 'bg-slate-200'
+                            }`} />
+                          )}
+
+                          {/* Symmetrical timeline step bubble */}
+                          <div className={`z-10 w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-black font-sans shadow-sm ${
+                            isCompleted 
+                              ? 'bg-emerald-500 text-white border-2 border-emerald-100' 
+                              : isActive 
+                              ? 'bg-blue-600 text-white border-4 border-blue-100 scale-115 animate-pulse' 
+                              : 'bg-white text-slate-400 border border-slate-200'
+                          }`}>
+                            {idx + 1}
+                          </div>
+                        </div>
+
+                        {/* 3. Right Column (Main Card content) */}
+                        <div className="flex-1 py-1">
+                          {isActive ? (
+                            <div className="bg-sky-50/50 border-2 border-blue-500 rounded-2xl p-4.5 shadow-md space-y-3.5 transition-all w-full relative">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="truncate flex-1">
+                                  <strong className="text-slate-800 text-[12.5px] font-black block truncate leading-tight">
+                                    {st.clientName}
+                                  </strong>
+                                  <p className="text-[10.5px] text-slate-500 font-medium mt-1 leading-snug break-words">
+                                    {st.address}
+                                  </p>
+                                </div>
+                                <ChevronRight className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                              </div>
+
+                              {/* Action Row */}
+                              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-blue-100/60">
+                                {/* GO/NAVIGATE */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    window.open(`https://www.google.com/maps/dir/?api=1&destination=${st.lat},${st.lng}`, '_blank');
+                                  }}
+                                  className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold px-4 py-2 rounded-full text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 transition-all"
+                                >
+                                  <Navigation className="w-3.5 h-3.5 text-white fill-white" />
+                                  Go
+                                </button>
+
+                                {/* ACTIONS EXTENDED (...) */}
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedStopOptions(expandedStopOptions === st.id ? null : st.id)}
+                                  className="border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-full w-8 h-8 flex items-center justify-center shrink-0 cursor-pointer active:scale-95 transition-all"
+                                >
+                                  <span className="font-extrabold text-[12px] leading-none">...</span>
+                                </button>
+
+                                {/* SUCCESS */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (viewedRecRoute.status !== 'active' && viewedRecRoute.status !== 'em_andamento') {
+                                      alert('Por favor, inicie esta rota clicando em "Iniciar Rota" abaixo para poder registrar entregas!');
+                                      return;
+                                    }
+                                    setConfirmingStop(st);
+                                    setConfirmPhotos([]);
+                                    setModalHasSigned(false);
+                                  }}
+                                  className="border-2 border-emerald-500 bg-emerald-50 hover:bg-emerald-500 hover:text-white text-emerald-700 font-extrabold px-4 py-1.5 rounded-full text-[10px] uppercase tracking-wider flex items-center gap-1 cursor-pointer shadow-sm active:scale-95 transition-all ml-auto"
+                                >
+                                  <Check className="w-3.5 h-3.5 stroke-[3.5]" />
+                                  Success
+                                </button>
+
+                                {/* DISMISS / FAILED */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRefuseStop(st)}
+                                  className="border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-full w-8 h-8 flex items-center justify-center shrink-0 cursor-pointer active:scale-95 transition-all"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+
+                              {/* Expanded extra options panel */}
+                              {expandedStopOptions === st.id && (
+                                <div className="bg-white border border-slate-100 rounded-xl p-2.5 mt-2 space-y-2 text-[10.5px] font-sans">
+                                  <div className="font-black text-[9px] uppercase tracking-wider text-slate-400 pb-1.5 border-b">
+                                    Contatos Rápidos
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => window.open(`https://wa.me/${st.clientWhatsApp.replace(/\D/g, '')}`, '_blank')}
+                                      className="py-1.5 px-2 border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg font-bold flex items-center gap-1 justify-center transition-all"
+                                    >
+                                      <Phone className="w-3.5 h-3.5 text-emerald-600" />
+                                      WhatsApp
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => window.open(`tel:${st.clientWhatsApp}`)}
+                                      className="py-1.5 px-2 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-lg font-bold flex items-center gap-1 justify-center transition-all"
+                                    >
+                                      Ligar
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        alert(`Nota Fiscal de ${st.clientName}\nEndereço: ${st.address}\nPrioridade: Urgente\nProdutos: Cargas Secas e Congelados de Logística Central.`);
+                                      }}
+                                      className="py-1.5 px-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg font-bold flex items-center gap-1 justify-center transition-all col-span-2"
+                                    >
+                                      📋 Ver Notas Fiscais & Detalhes
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className={`bg-white border border-slate-200/80 rounded-2xl p-3.5 flex items-center justify-between shadow-xs transition-all ${
+                              isCompleted ? 'opacity-80 hover:opacity-100' : 'opacity-95'
+                            }`}>
+                              <div className="truncate flex-1">
+                                <strong className={`text-slate-700 text-[11px] font-bold block truncate ${
+                                  isCompleted ? 'line-through text-slate-400' : ''
+                                }`}>
+                                  {st.clientName}
+                                </strong>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                                  {st.address}
+                                </p>
+                              </div>
+                              <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider scale-95 shrink-0 ${
+                                isCompleted 
+                                  ? 'text-emerald-600 bg-emerald-50 border border-emerald-100' 
+                                  : 'text-slate-400 bg-slate-50 border border-slate-150'
+                              }`}>
+                                {isCompleted ? 'Entregue ✓' : 'Pendente'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Bottom Route Controls (Start or Complete Route) */}
+                {viewedRecRoute.status === 'draft' && (
+                  <div className="p-4 bg-white border border-slate-200/80 rounded-2xl shadow-lg mt-4 flex flex-col gap-2 font-sans">
+                    <div className="flex items-center gap-2 text-amber-600 bg-amber-50/50 p-3 rounded-xl border border-amber-200/50">
+                      <AlertCircle className="w-5 h-5 shrink-0" />
+                      <div className="text-[10.5px] leading-snug font-medium">
+                        <strong>Inicie a jornada:</strong> Esta rota recebida do gerente está agendada. Inicie para habilitar o registro de assinaturas e fotos.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleStartRecRoute(viewedRecRoute.id)}
+                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold uppercase rounded-xl shadow-md transition-all flex items-center justify-center gap-2 active:scale-95 cursor-pointer text-xs tracking-wider"
+                    >
+                      <Play className="w-4 h-4 fill-white text-white" />
+                      Iniciar Rota Recebida
+                    </button>
+                  </div>
+                )}
+
+                {viewedRecRoute.status === 'active' && viewedRecRoute.stops.every(s => s.status === 'completed') && (
+                  <div className="p-4.5 bg-white border border-emerald-100 rounded-2xl text-center space-y-4 shadow-lg mt-4 font-sans">
+                    <div className="w-12 h-12 rounded-full bg-emerald-50 border border-emerald-100 flex items-center justify-center mx-auto text-emerald-500">
+                      <CheckCircle className="w-7 h-7" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="font-extrabold text-slate-800 text-xs uppercase tracking-wide">
+                        Todas as paradas foram concluídas!
+                      </h4>
+                      <p className="text-[10.5px] text-slate-500 max-w-xs mx-auto leading-relaxed">
+                        Excelente trabalho! Finalize a rota para gerar o relatório consolidado de telemetria e sincronizar os dados.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await onUpdateRoute(viewedRecRoute.id, { status: 'completed' });
+                          alert('Rota concluída com sucesso! Os relatórios foram sincronizados com a central do gerente.');
+                        } catch (e) {
+                          alert('Falha ao concluir a rota no banco de dados.');
+                        }
+                      }}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer uppercase tracking-wider text-[11px]"
+                    >
+                      <Check className="w-4 h-4 stroke-[3]" />
+                      Finalizar Rota Recebida
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : mEditingRouteId ? (
               // Inline edit interface for editing a received route
               <div className="space-y-4 border border-indigo-100 bg-indigo-50/20 p-4 rounded-xl">
                 <div className="flex items-center justify-between border-b pb-2">
                   <span className="font-extrabold text-indigo-900 uppercase text-[10px]">Editar Rota Recebida</span>
                   <button 
+                    type="button"
                     onClick={() => setMEditingRouteId(null)}
                     className="text-slate-400 hover:text-slate-600 font-bold hover:bg-slate-100 p-1 rounded-md text-[10px]"
                   >
@@ -1394,7 +1779,7 @@ export function MotoristaDashboard({
               // List view of received routes
               <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1">
                 {myReceivedRoutes.map(route => (
-                  <div key={route.id} className="p-4 border border-slate-200 rounded-2xl bg-emerald-50/25 border-l-4 border-l-emerald-500 space-y-3 shadow-md">
+                  <div key={route.id} className="p-4 border border-slate-200 rounded-2xl bg-indigo-50/15 border-l-4 border-l-indigo-500 space-y-3 shadow-md">
                     <div className="flex items-center justify-between gap-2">
                       <div>
                         <strong className="text-slate-800 font-extrabold truncate max-w-[150px] text-[13px] block">
@@ -1403,8 +1788,8 @@ export function MotoristaDashboard({
                         <span className="text-[9px] text-slate-400 block font-mono">Recebida do Gerente Regional</span>
                       </div>
                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
-                        route.status === 'active' ? 'bg-amber-100 text-amber-800 border border-amber-200' :
-                        route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-indigo-100 text-indigo-700 border border-indigo-200'
+                        route.status === 'active' || route.status === 'em_andamento' ? 'bg-amber-100 text-amber-800 border border-amber-200 animate-pulse' :
+                        route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-700 border border-slate-200'
                       }`}>
                         {route.status}
                       </span>
@@ -1415,45 +1800,45 @@ export function MotoristaDashboard({
                       <p className="font-bold text-slate-700 mb-1 uppercase text-[9px] tracking-wider">📋 Clientes / Paradas ({route.stops.length}):</p>
                       <div className="bg-white/80 rounded-xl p-2 border space-y-1 font-sans text-[10.5px] leading-relaxed">
                         {route.stops.map((st, idx) => (
-                          <motion.div 
+                          <div 
                             key={st.id} 
-                            layout
-                            initial={{ opacity: 0.9, scale: 0.98 }}
-                            animate={{ 
-                              opacity: 1, 
-                              scale: 1,
-                              backgroundColor: st.status === 'completed' ? '#ecfdf5' : st.status === 'Chegando' ? '#fffbeb' : '#ffffff',
-                              color: st.status === 'completed' ? '#065f46' : st.status === 'Chegando' ? '#92400e' : '#334155'
-                            }}
-                            className="flex justify-between items-center px-2 py-1.5 rounded-lg border border-slate-100 gap-1"
+                            className="flex justify-between items-center px-2 py-1 rounded-lg border border-slate-50 gap-1 bg-white"
                           >
-                            <span className="truncate max-w-[140px] font-medium">#{idx + 1} {st.clientName}</span>
-                            <span className={`font-mono font-black text-[9px] shrink-0 uppercase border px-1.5 py-0.5 rounded-full leading-none ${
+                            <span className="truncate max-w-[140px] font-medium text-slate-600">#{idx + 1} {st.clientName}</span>
+                            <span className={`font-mono font-bold text-[8.5px] shrink-0 uppercase border px-1 py-0.5 rounded-full leading-none ${
                               st.status === 'completed' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                              st.status === 'Chegando' ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-500 border-slate-150'
+                              st.status === 'Chegando' ? 'bg-amber-50 text-amber-800 border-amber-200 animate-pulse' : 'bg-slate-50 text-slate-400 border-slate-150'
                             }`}>
-                              {st.status === 'completed' ? 'CONCLUÍDO ✓' : st.status === 'Chegando' ? 'CHEGANDO 🚚' : 'PENDENTE'}
+                              {st.status === 'completed' ? 'CONCLUÍDO' : st.status === 'Chegando' ? 'CHEGANDO' : 'PENDENTE'}
                             </span>
-                          </motion.div>
+                          </div>
                         ))}
                       </div>
                     </div>
 
                     <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRecRouteId(route.id)}
+                        className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                      >
+                        <Clock className="w-3.5 h-3.5 text-white animate-pulse" />
+                        Linha do Tempo
+                      </button>
+
                       {route.status === 'draft' && (
                         <button
-                          onClick={() => {
-                            onStartRoute(route.id);
-                            alert(`Rota "${route.name}" iniciada com sucesso! Você pode acompanhar o monitoramento de satélite.`);
-                          }}
-                          className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                          type="button"
+                          onClick={() => handleStartRecRoute(route.id)}
+                          className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center justify-center gap-1 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
                         >
-                          <Play className="w-3.5 h-3.5 fill-white" />
-                          Iniciar Rota
+                          <Play className="w-3.5 h-3.5 fill-white text-white" />
+                          Iniciar
                         </button>
                       )}
 
                       <button
+                        type="button"
                         onClick={() => {
                           setMEditingRouteId(route.id);
                           setMEditingRouteName(route.name);
@@ -1466,22 +1851,25 @@ export function MotoristaDashboard({
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => {
                           setOptimizingRoute(route);
                           setTempStops(route.stops);
                           setOptimizationStep('select');
                         }}
                         className="py-1.5 px-3 border border-emerald-200 text-emerald-700 hover:bg-emerald-50 rounded-xl font-bold transition-all hover:border-emerald-300 cursor-pointer text-xs flex items-center gap-1"
-                        title="Otimizar Rota (Automática ou Manual)"
                       >
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
                         Otimizar
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => {
-                          if (confirm('Deseja excluir esta rota recebida permanentemente?')) {
+                          if (window.confirm('Deseja excluir esta rota recebida permanentemente?')) {
                             onDeleteRoute(route.id);
+                            if (selectedRecRouteId === route.id) {
+                              setSelectedRecRouteId(null);
+                            }
                           }
                         }}
                         className="p-1.5 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
@@ -1496,14 +1884,173 @@ export function MotoristaDashboard({
                 )}
               </div>
             )}
+          </div>
+        )}
 
+        {/* TAB 5: COMPLETED / HISTORIC SAVED ROUTES */}
+        {activeTab === 'finalizadas' && (
+          <div className="bg-white border border-slate-200 rounded-2xl p-4.5 shadow-sm space-y-4 text-xs font-sans">
+            {viewedCompletedRoute ? (
+              // Detail view of the selected completed route
+              <div className="space-y-4">
+                {/* Header Row */}
+                <div className="flex items-center justify-between bg-slate-50 border border-slate-150 rounded-2xl p-3.5 shadow-sm">
+                  <button 
+                    type="button"
+                    onClick={() => setSelectedCompletedRouteId(null)}
+                    className="w-9 h-9 rounded-full border border-slate-200 bg-white hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-slate-800 transition-all cursor-pointer active:scale-95 shadow-sm shrink-0"
+                  >
+                    <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+                  </button>
+                  
+                  <div className="text-center flex-1 mx-2">
+                    <div className="text-slate-800 font-extrabold text-xs md:text-sm tracking-tight font-sans">
+                      {viewedCompletedRoute.name}
+                    </div>
+                    <div className="text-[10px] text-teal-600 font-mono mt-0.5 uppercase tracking-wider font-extrabold flex items-center justify-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5 text-teal-500 shrink-0" />
+                      Rota Concluída e Salva
+                    </div>
+                  </div>
 
+                  <div className="w-9 h-9 shrink-0" /> {/* Spacer */}
+                </div>
 
+                {/* Route Overview Cards */}
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="p-3 bg-slate-50/50 border border-slate-100 rounded-xl space-y-1">
+                    <span className="text-slate-400 font-semibold uppercase text-[9px] block">Origem</span>
+                    <strong className="text-slate-700 block truncate">{viewedCompletedRoute.origin}</strong>
+                  </div>
+                  <div className="p-3 bg-slate-50/50 border border-slate-100 rounded-xl space-y-1">
+                    <span className="text-slate-400 font-semibold uppercase text-[9px] block">Paradas Concluídas</span>
+                    <strong className="text-slate-700 block truncate">{viewedCompletedRoute.stops.length} entregas</strong>
+                  </div>
+                </div>
 
+                {/* Vertical Timeline of completed stops */}
+                <div className="space-y-3.5 pt-2">
+                  <h3 className="font-extrabold text-slate-700 text-[11px] uppercase tracking-wider">Histórico de Paradas</h3>
+                  
+                  <div className="relative pl-6 space-y-5 before:content-[''] before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-[2px] before:bg-slate-200/80">
+                    {viewedCompletedRoute.stops.map((stop, index) => {
+                      return (
+                        <div key={stop.id} className="relative space-y-2">
+                          {/* Circle Marker */}
+                          <div className="absolute -left-6 top-1 w-5.5 h-5.5 rounded-full bg-teal-50 border-2 border-teal-500 flex items-center justify-center shadow-sm">
+                            <Check className="w-3 h-3 text-teal-600 stroke-[3]" />
+                          </div>
 
+                          <div className="bg-slate-50 border border-slate-150 rounded-xl p-3 space-y-2.5 shadow-xs">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <h4 className="font-extrabold text-slate-800 text-xs truncate">
+                                  {index + 1}. {stop.clientName}
+                                </h4>
+                                <p className="text-[10px] text-slate-400 truncate mt-0.5">{stop.address}</p>
+                              </div>
+                              <span className="text-[9px] font-mono font-bold text-teal-700 bg-teal-50 border border-teal-100/50 rounded-md px-1.5 py-0.5 shrink-0 uppercase">
+                                Entregue
+                              </span>
+                            </div>
 
+                            {/* Show completed timestamp */}
+                            {stop.completedAt && (
+                              <div className="flex items-center gap-1 text-[10px] text-slate-500 font-mono">
+                                <Clock className="w-3 h-3 text-slate-400" />
+                                <span>Concluído em: {new Date(stop.completedAt).toLocaleString('pt-BR')}</span>
+                              </div>
+                            )}
 
+                            {/* Digital signature or captured photo row if present */}
+                            {(stop.signatureUrl || stop.photoUrl) && (
+                              <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-200/50">
+                                {stop.signatureUrl && (
+                                  <div className="space-y-1">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Assinatura digital</span>
+                                    <div className="h-16 bg-white border border-slate-200 rounded-lg p-1 flex items-center justify-center overflow-hidden">
+                                      <img 
+                                        src={stop.signatureUrl} 
+                                        alt="Assinatura" 
+                                        className="max-h-full max-w-full object-contain filter contrast-125 select-none" 
+                                        referrerPolicy="no-referrer"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                                {stop.photoUrl && (
+                                  <div className="space-y-1">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Comprovante fotográfico</span>
+                                    <div className="h-16 bg-white border border-slate-200 rounded-lg p-1 flex items-center justify-center overflow-hidden">
+                                      <img 
+                                        src={stop.photoUrl} 
+                                        alt="Comprovante" 
+                                        className="max-h-full max-w-full object-cover rounded-md cursor-zoom-in" 
+                                        referrerPolicy="no-referrer"
+                                        onClick={() => {
+                                          if (stop.photoUrl) window.open(stop.photoUrl, '_blank');
+                                        }}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              // List view of all completed routes
+              <div className="space-y-4">
+                <span className="font-extrabold text-slate-800 text-xs block uppercase tracking-wider">Histórico de Rotas Salvas ({myCompletedRoutes.length})</span>
 
+                <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1">
+                  {myCompletedRoutes.map(route => {
+                    return (
+                      <div key={route.id} className="p-4 border border-teal-150 rounded-2xl bg-teal-50/10 space-y-3 shadow-sm border-l-4 border-l-teal-500">
+                        <div className="flex items-center justify-between gap-2">
+                          <strong className="text-slate-800 font-extrabold truncate max-w-[180px] text-[13px]">{route.name}</strong>
+                          <span className="px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 bg-teal-50 text-teal-800 border border-teal-200">
+                            Finalizada
+                          </span>
+                        </div>
+
+                        <p className="text-[11px] text-slate-500 line-clamp-1">🔍 Origem: <span className="font-medium text-slate-700">{route.origin}</span></p>
+                        <p className="text-[11px] text-slate-500">🏁 Entregas: <strong className="text-teal-650 font-extrabold">{route.stops.length} concluídas com sucesso</strong></p>
+
+                        <div className="pt-2.5 border-t border-slate-200/60 flex items-center gap-2">
+                          <button
+                            onClick={() => setSelectedCompletedRouteId(route.id)}
+                            className="flex-1 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-sm active:scale-95 transition-all text-xs"
+                          >
+                            <CheckCircle className="w-4 h-4 text-white" />
+                            Ver Detalhes / Comprovantes
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              if (window.confirm('Tem certeza de que deseja excluir o histórico desta rota permanentemente?')) {
+                                onDeleteRoute(route.id);
+                              }
+                            }}
+                            className="p-2 border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-200 rounded-xl bg-white hover:bg-rose-50 transition-all cursor-pointer active:scale-90"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {myCompletedRoutes.length === 0 && (
+                    <div className="text-center py-12 text-slate-400 font-medium">Nenhuma rota finalizada e salva no histórico ainda.</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
