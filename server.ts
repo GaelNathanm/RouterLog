@@ -556,7 +556,7 @@ app.post('/api/gemini/suggest-stops', async (req, res) => {
   }
 });
 
-// API endpoint for Gemini route sequence optimization (TSP)
+// API endpoint for Gemini route sequence optimization (TSP/VRP)
 app.post('/api/gemini/optimize-route', async (req, res) => {
   const { stops, originLat, originLng } = req.body;
   try {
@@ -570,52 +570,76 @@ app.post('/api/gemini/optimize-route', async (req, res) => {
       return res.json({ stops: [] });
     }
 
-    // Prepare a descriptive prompt for Gemini
-    const stopsListSummary = stops.map((s: any, idx: number) => 
-      `- Parada ${idx + 1}: ID: "${s.id}", Cliente: "${s.clientName}", Endereço: "${s.address}", Coordenadas: (${s.lat}, ${s.lng})`
-    ).join('\n');
+    // Map input to the requested "REGRAS DE ENTRADA" JSON format
+    const promptInput = {
+      ponto_partida: { lat: originLat, lng: originLng },
+      paradas: stops.map((s: any) => ({
+        id: s.id,
+        lat: s.lat,
+        lng: s.lng,
+        janela_inicio: s.janela_inicio || undefined,
+        janela_fim: s.janela_fim || undefined,
+        prioridade: s.prioridade || 'media'
+      }))
+    };
 
     const prompt = `
-      Você é um especialista em logística, tráfego e inteligência de rotas.
-      Sua missão é reordenar as paradas (stops) fornecidas para criar a sequência de entrega mais eficiente possível, partindo da coordenada de origem.
-      Minimize a distância total percorrida e evite caminhos em ziguezague ou retornos desnecessários.
+      Você é o motor de inteligência artificial do sistema RouteLog, especializado em otimização de rotas logísticas com múltiplas paradas (Vehicle Routing Problem - VRP).
+      Seu objetivo é receber uma lista de paradas pendentes e devolvê-las ordenadas de forma lógica e otimizada, visando menor tempo total e eficiência de deslocamento.
 
-      [COORDENADAS DE ORIGEM DO CENTRO DE DISTRIBUIÇÃO]
-      Latitude: ${originLat}
-      Longitude: ${originLng}
+      ---
 
-      [LISTA DE PARADAS A REORDENAR]
-      ${stopsListSummary}
+      ### REGRAS DE ENTRADA
+      Você receberá um objeto JSON contendo:
+      1. "ponto_partida": Coordenadas {lat, lng} de onde o motorista inicia a rota.
+      2. "paradas": Uma lista de objetos de paradas, onde cada um contém:
+         - "id": ID único da parada.
+         - "lat": Latitude.
+         - "lng": Longitude.
+         - "janela_inicio" (opcional): Horário sugerido para entrega (ex: "08:00").
+         - "janela_fim" (opcional): Horário limite para entrega (ex: "12:00").
+         - "prioridade" (opcional): "alta", "media" ou "baixa".
 
-      Por favor, retorne uma lista contendo exatamente as mesmas paradas fornecidas, porém reordenadas na sequência lógica ideal sugerida por você para as entregas.
-      Não adicione novas paradas e não remova nenhuma parada da lista. Preserve exatamente os dados originais (especialmente os IDs) de cada parada.
+      ---
+
+      ### LOGICA DE OTIMIZAÇÃO (Seus Critérios de Decisão)
+      Para ordenar as paradas, você deve aplicar os seguintes critérios, do mais importante ao menos importante:
+      1. Proximidade Geográfica (Distância Euclidiana/Haversine calculada de forma aproximada entre as coordenadas).
+      2. Janela de Horário: Paradas com "janela_fim" mais cedo devem ser priorizadas caso a rota geográfica faça sentido.
+      3. Prioridade: Paradas com prioridade "alta" devem ser movidas para o início da fila, desde que não causem um desvio geográfico absurdo (backtracking).
+      4. Evitar cruzamento de caminhos (a rota deve seguir um fluxo contínuo e não ir e voltar pela mesma região).
+
+      ---
+
+      ### ENTRADA DA ROTA A SER OTIMIZADA:
+      ${JSON.stringify(promptInput, null, 2)}
     `;
 
     const response = await ai.models.generateContent({
       model: 'gemini-3.5-flash',
       contents: prompt,
       config: {
-        systemInstruction: 'Você é um assistente de despacho logístico que responde unicamente em formato JSON em conformidade estrita com o esquema fornecido.',
+        systemInstruction: 'Você é o motor de inteligência artificial do sistema RouteLog, especializado em otimização de rotas logísticas com múltiplas paradas (Vehicle Routing Problem - VRP). Você responde unicamente em formato JSON em conformidade estrita com o esquema fornecido.',
         responseMimeType: 'application/json',
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            stops: {
+            rota_otimizada: {
               type: Type.ARRAY,
               items: {
                 type: Type.OBJECT,
                 properties: {
-                  id: { type: Type.STRING, description: 'ID original da parada' },
-                  clientName: { type: Type.STRING, description: 'Nome do cliente original' },
-                  address: { type: Type.STRING, description: 'Endereço original' },
-                  lat: { type: Type.NUMBER, description: 'Latitude original' },
-                  lng: { type: Type.NUMBER, description: 'Longitude original' }
+                  posicao: { type: Type.INTEGER, description: 'Posição sequencial das entregas' },
+                  id: { type: Type.STRING, description: 'ID da parada correspondente' },
+                  justificativa: { type: Type.STRING, description: 'Breve justificativa de 1 frase do porquê esta parada ficou nesta posição' }
                 },
-                required: ['id']
+                required: ['posicao', 'id', 'justificativa']
               }
-            }
+            },
+            tempo_estimado_total_minutos: { type: Type.INTEGER, description: 'Tempo total estimado em minutos para completar todo o percurso' },
+            insights_do_trajeto: { type: Type.STRING, description: 'Uma frase resumindo o padrão de entrega ou alertas' }
           },
-          required: ['stops']
+          required: ['rota_otimizada', 'tempo_estimado_total_minutos', 'insights_do_trajeto']
         }
       }
     });
@@ -623,17 +647,27 @@ app.post('/api/gemini/optimize-route', async (req, res) => {
     const textOutput = response.text || '';
     const optimizedResult = JSON.parse(textOutput.trim());
 
-    if (optimizedResult.stops && optimizedResult.stops.length > 0) {
+    if (optimizedResult.rota_otimizada && optimizedResult.rota_otimizada.length > 0) {
       // Safely map back using original stops to ensure NO fields are lost or modified
-      const reorderedStops = optimizedResult.stops.map((os: any) => {
-        return stops.find((s: any) => s.id === os.id);
+      const reorderedStops = optimizedResult.rota_otimizada.map((ro: any) => {
+        const originalStop = stops.find((s: any) => s.id === ro.id);
+        if (originalStop) {
+          return {
+            ...originalStop,
+            posicao: ro.posicao,
+            justificativa: ro.justificativa
+          };
+        }
+        return null;
       }).filter(Boolean);
 
       // If mapping was fully successful, return it
       if (reorderedStops.length === stops.length) {
         return res.json({
           stops: reorderedStops,
-          source: 'Gemini AI Optimizer (Server-Side)'
+          tempo_estimado_total_minutos: optimizedResult.tempo_estimado_total_minutos,
+          insights_do_trajeto: optimizedResult.insights_do_trajeto,
+          source: 'Gemini VRP AI Optimizer'
         });
       }
     }

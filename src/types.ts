@@ -62,6 +62,11 @@ export interface Parada {
   canhotoPhotoUrl?: string; // base64 photo of the invoice/receipt receipt (canhoto nota fiscal)
   localPhotoUrl?: string;   // base64 photo of the delivery site/establishment
   completedAt?: string;  // completion ISO timestamp
+  justificativa?: string;
+  posicao?: number;
+  janela_inicio?: string;
+  janela_fim?: string;
+  prioridade?: 'alta' | 'media' | 'baixa';
 }
 
 export interface Rota {

@@ -67,16 +67,17 @@ service cloud.firestore {
 
     // Users Collection
     match /users/{userId} {
-      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow get: if isSignedIn() && isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isSignedIn() && (isOwner(userId) || isAdmin());
       
       // Basic registration: can register self as non-admin, admins must be created by an existing admin
-      allow create: if isSignedIn() && (
+      allow create: if isSignedIn() && isValidId(userId) && (
         (isOwner(userId) && request.resource.data.role != 0) || 
         isAdmin()
       );
       
       // Standard users can update their own non-RBAC fields, while Admins have full access
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && isValidId(userId) && (
         isAdmin() ||
         (isOwner(userId) && 
          request.resource.data.role == resource.data.role && 
@@ -84,12 +85,18 @@ service cloud.firestore {
       );
       
       // Deletion of profiles is strictly reserved to the Admin Role
-      allow delete: if isAdmin();
+      allow delete: if isSignedIn() && isValidId(userId) && isAdmin();
     }
 
     // Routes (Rotas) Collection
     match /rotas/{rotaId} {
-      allow read: if isSignedIn() && (
+      allow get: if isSignedIn() && isValidId(rotaId) && (
+        isAdmin() || 
+        isGerente() || 
+        isVendedor() ||
+        (isMotorista() && resource.data.driverId == request.auth.uid)
+      );
+      allow list: if isSignedIn() && (
         isAdmin() || 
         isGerente() || 
         isVendedor() ||
@@ -97,10 +104,10 @@ service cloud.firestore {
       );
       
       // Creating routes is restricted to Logistics Managers or Admins
-      allow create: if isSignedIn() && (isAdmin() || isGerente());
+      allow create: if isSignedIn() && isValidId(rotaId) && (isAdmin() || isGerente());
       
       // Updating routes is for Managers/Admins, or Motoristas updating progress of their own assigned route
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && isValidId(rotaId) && (
         isAdmin() || 
         isGerente() || 
         (isMotorista() && 
@@ -108,15 +115,16 @@ service cloud.firestore {
          request.resource.data.driverId == resource.data.driverId)
       );
       
-      allow delete: if isSignedIn() && (isAdmin() || isGerente());
+      allow delete: if isSignedIn() && isValidId(rotaId) && (isAdmin() || isGerente());
     }
 
     // Real-Time Locations Collection
     match /locations/{driverId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && isValidId(driverId);
+      allow list: if isSignedIn();
       
       // Drivers can only update their own locations, Admins/Gerentes can manage all
-      allow write: if isSignedIn() && (
+      allow create, update, delete: if isSignedIn() && isValidId(driverId) && (
         isAdmin() || 
         isGerente() || 
         (isMotorista() && request.auth.uid == driverId)
@@ -125,10 +133,11 @@ service cloud.firestore {
 
     // Historical Breadcrumbs Location Trail Collection
     match /breadcrumbs/{driverId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && isValidId(driverId);
+      allow list: if isSignedIn();
       
       // Drivers can only write to their own breadcrumb document, Admins/Gerentes can manage all
-      allow write: if isSignedIn() && (
+      allow create, update, delete: if isSignedIn() && isValidId(driverId) && (
         isAdmin() || 
         isGerente() || 
         (isMotorista() && request.auth.uid == driverId)
@@ -137,54 +146,59 @@ service cloud.firestore {
 
     // Chats Messages Collection
     match /chats/{chatId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && isValidId(chatId);
+      allow list: if isSignedIn();
       
       // Injects are secure: senderId in payload must strictly match the authenticated UID
-      allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow create: if isSignedIn() && isValidId(chatId) && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if isSignedIn() && isValidId(chatId) && isAdmin();
     }
 
     // System Notifications Collection
     match /notifications/{notificationId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && isValidId(notificationId);
+      allow list: if isSignedIn();
       
       // Only Admins or Logistics Managers can dispatch announcements/alerts
-      allow write: if isSignedIn() && (isAdmin() || isGerente());
+      allow create, update, delete: if isSignedIn() && isValidId(notificationId) && (isAdmin() || isGerente());
     }
 
     // Push Dispatch Reports Collection
     match /push_logs/{pushLogId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && (isAdmin() || isGerente());
+      allow get: if isSignedIn() && isValidId(pushLogId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isValidId(pushLogId) && (isAdmin() || isGerente());
     }
 
     // Administrative Audit Log Collection
     match /audit_logs/{logId} {
-      allow read: if isSignedIn() && (isAdmin() || isGerente());
+      allow get: if isSignedIn() && isValidId(logId) && (isAdmin() || isGerente());
+      allow list: if isSignedIn() && (isAdmin() || isGerente());
       
       // Allow create if user is signed in and is Admin/Gerente, or they are creating a log with their own UID as adminId
-      allow create: if isSignedIn() && (
+      allow create: if isSignedIn() && isValidId(logId) && (
         isAdmin() || 
         isGerente() || 
         request.resource.data.adminId == request.auth.uid
       );
       
       // Updates and deletes are restricted to master Admins
-      allow update, delete: if isAdmin();
+      allow update, delete: if isSignedIn() && isValidId(logId) && isAdmin();
     }
 
     // Travel Performance Logs Collection
     match /performance_logs/{performanceLogId} {
-      allow read: if isSignedIn();
+      allow get: if isSignedIn() && isValidId(performanceLogId);
+      allow list: if isSignedIn();
       
       // Logs can be registered or updated by the driver, Manager, or Admin
-      allow create: if isSignedIn() && (
+      allow create: if isSignedIn() && isValidId(performanceLogId) && (
         isAdmin() || 
         isGerente() || 
         (isMotorista() && request.resource.data.driverId == request.auth.uid)
       );
       
-      allow update: if isSignedIn() && (
+      allow update: if isSignedIn() && isValidId(performanceLogId) && (
         isAdmin() || 
         isGerente() || 
         (isMotorista() && 
@@ -192,19 +206,21 @@ service cloud.firestore {
          request.resource.data.driverId == request.auth.uid)
       );
       
-      allow delete: if isAdmin();
+      allow delete: if isSignedIn() && isValidId(performanceLogId) && isAdmin();
     }
 
     // Regions Collection
     match /regions/{regionId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && (isAdmin() || isGerente());
+      allow get: if isSignedIn() && isValidId(regionId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isValidId(regionId) && (isAdmin() || isGerente());
     }
 
     // Clients Collection
     match /clients/{clientId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn() && (isAdmin() || isGerente() || isVendedor());
+      allow get: if isSignedIn() && isValidId(clientId);
+      allow list: if isSignedIn();
+      allow create, update, delete: if isSignedIn() && isValidId(clientId) && (isAdmin() || isGerente() || isVendedor());
     }
   }
 }

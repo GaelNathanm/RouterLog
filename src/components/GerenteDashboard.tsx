@@ -1891,6 +1891,12 @@ export function GerenteDashboard({
                                     )}
                                   </div>
                                   <p className="text-[10px] text-slate-450 truncate font-mono mt-0.5">{st.address}</p>
+                                  {st.justificativa && (
+                                    <div className="mt-1 text-[8.5px] text-amber-800 font-medium italic flex items-center gap-1 bg-amber-50/50 border border-amber-150 px-1.5 py-0.5 rounded">
+                                      <Sparkles className="w-2.5 h-2.5 text-amber-500 shrink-0" />
+                                      <span className="whitespace-normal leading-normal">{st.justificativa}</span>
+                                    </div>
+                                  )}
                                 </div>
 
                                 <div className="flex items-center gap-1 shrink-0">

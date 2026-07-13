@@ -1487,6 +1487,12 @@ export function MotoristaDashboard({
                                   <p className="text-[10.5px] text-slate-500 font-medium mt-1 leading-snug break-words">
                                     {st.address}
                                   </p>
+                                  {st.justificativa && (
+                                    <div className="mt-2 text-[9px] text-amber-850 font-semibold italic flex items-center gap-1.5 bg-amber-50 border border-amber-200/50 px-2.5 py-1 rounded-lg">
+                                      <Sparkles className="w-3.5 h-3.5 text-amber-500 fill-amber-300 shrink-0" />
+                                      <span className="whitespace-normal leading-normal">{st.justificativa}</span>
+                                    </div>
+                                  )}
                                 </div>
                                 <ChevronRight className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                               </div>
@@ -1602,6 +1608,12 @@ export function MotoristaDashboard({
                                 <p className="text-[10px] text-slate-400 truncate mt-0.5">
                                   {st.address}
                                 </p>
+                                {st.justificativa && (
+                                  <div className="mt-1.5 text-[8.5px] text-amber-800 font-medium italic flex items-center gap-1 bg-amber-50/40 border border-amber-100/50 px-2 py-0.5 rounded-md">
+                                    <Sparkles className="w-2.5 h-2.5 text-amber-500 fill-amber-300 shrink-0" />
+                                    <span className="whitespace-normal leading-tight">{st.justificativa}</span>
+                                  </div>
+                                )}
                               </div>
                               <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-wider scale-95 shrink-0 ${
                                 isCompleted 
