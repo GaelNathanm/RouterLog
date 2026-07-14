@@ -22,6 +22,21 @@ const firebaseConfig = {
   databaseId: appletConfig.firestoreDatabaseId || import.meta.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-routelog-e2c2a647-eccf-4dd5-a051-f6a02c26de31",
 };
 
+// Validate required environment variables at runtime
+const envVarsCheck = {
+  VITE_FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY || (process.env as any).VITE_FIREBASE_API_KEY || appletConfig.apiKey,
+  VITE_FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || (process.env as any).VITE_FIREBASE_AUTH_DOMAIN || appletConfig.authDomain,
+  VITE_FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID || (process.env as any).VITE_FIREBASE_PROJECT_ID || appletConfig.projectId,
+  VITE_FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID || (process.env as any).VITE_FIREBASE_APP_ID || appletConfig.appId,
+  VITE_FIREBASE_DATABASE_ID: import.meta.env.VITE_FIREBASE_DATABASE_ID || (process.env as any).VITE_FIREBASE_DATABASE_ID || appletConfig.firestoreDatabaseId,
+};
+
+export const missingFirebaseEnvVars = Object.entries(envVarsCheck)
+  .filter(([_, value]) => !value)
+  .map(([key]) => key);
+
+export const hasFirebaseConfigError = missingFirebaseEnvVars.length > 0;
+
 console.log('[Firebase config] Initializing core with project ID:', firebaseConfig.projectId);
 
 const app = initializeApp(firebaseConfig);
