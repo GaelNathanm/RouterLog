@@ -44,6 +44,24 @@ export default function RouteMap({
   const [selectedStop, setSelectedStop] = useState<{ stop: Parada; routeName: string } | null>(null);
   const [hoveredDriver, setHoveredDriver] = useState<{ driverName: string; location: GPSLocation; plate: string } | null>(null);
   const [driverFilter, setDriverFilter] = useState<{ [drvId: string]: boolean }>({});
+  const [completionNotification, setCompletionNotification] = useState<string | null>(null);
+
+  // Keep track of previously active routes to detect the exact moment they get completed
+  const prevRotasRef = useRef<Rota[]>([]);
+
+  // Effect to verify if a driver has finished their route and clear map automatically
+  useEffect(() => {
+    if (prevRotasRef.current && prevRotasRef.current.length > 0) {
+      rotas.forEach(currentRoute => {
+        const previousRoute = prevRotasRef.current.find(r => r.id === currentRoute.id);
+        if (previousRoute && previousRoute.status !== 'completed' && currentRoute.status === 'completed') {
+          // Driver completed the route!
+          setCompletionNotification(`O motorista ${currentRoute.driverName} concluiu a rota "${currentRoute.name}". As informações de rota foram limpas do mapa automaticamente.`);
+        }
+      });
+    }
+    prevRotasRef.current = rotas;
+  }, [rotas]);
 
   // Leaflet Map References
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -97,7 +115,11 @@ export default function RouteMap({
     }
     return rotas.filter(r => {
       const matchesRegion = effectiveRegion === 'all' || r.region === effectiveRegion;
-      const matchesStatus = selectedStatus === 'all' || r.status === selectedStatus;
+      
+      // EXCLUDE completed routes automatically by default when selectedStatus is 'all'
+      const matchesStatus = selectedStatus === 'all' 
+        ? r.status !== 'completed' 
+        : r.status === selectedStatus;
       
       // Filter out if driver filter is explicitly deactivated
       const passesDriver = driverFilter[r.driverId] !== false;
@@ -557,6 +579,24 @@ export default function RouteMap({
 
       {/* Main Row layout composed of Sidebar (if singleRouteMode) + Map */}
       <div className="flex-1 flex items-stretch overflow-hidden relative">
+        
+        {/* Automatic Completion Clean alert Toast */}
+        {completionNotification && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-800 text-white px-5 py-3 rounded-xl shadow-2xl border border-emerald-650 z-[9999] flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300 max-w-sm text-xs leading-normal">
+            <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-300 animate-bounce" />
+            <div className="flex-1">
+              <span className="font-bold block text-[10px] uppercase tracking-wider text-emerald-200">Limpeza Automática de Rota Concluída</span>
+              <p className="text-[11px] font-medium text-white/95 mt-0.5">{completionNotification}</p>
+            </div>
+            <button 
+              type="button"
+              onClick={() => setCompletionNotification(null)}
+              className="text-white hover:text-emerald-200 transition-colors p-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
         
         {/* Main Google Maps API Canvas */}
         <div className="flex-1 h-full min-h-[300px] bg-slate-100 relative">

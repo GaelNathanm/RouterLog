@@ -19,7 +19,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   AudioPlayer, AudioRecorderButton 
 } from './DashboardUtils';
-import { db, saveCloudGPSLocation } from '../firebase';
+import { db, saveCloudGPSLocation, sanitizeForFirestore } from '../firebase';
 import { 
   collection, query, where, onSnapshot, doc, updateDoc, setDoc 
 } from 'firebase/firestore';
@@ -285,11 +285,11 @@ export function MotoristaDashboard({
       const isRouteFinished = nextIndex >= updatedStops.length;
       const updatedStatus = isRouteFinished ? 'completed' : 'active';
 
-      await updateDoc(routeRef, {
+      await updateDoc(routeRef, sanitizeForFirestore({
         stops: updatedStops,
         currentStopIndex: nextIndex,
         status: updatedStatus
-      });
+      }));
     } catch (err) {
       console.error('[handleCompleteStop] Firestore write error:', err);
     }
@@ -298,9 +298,9 @@ export function MotoristaDashboard({
   const setIsRouteActive = async (routeId: string, isActive: boolean) => {
     try {
       const routeRef = doc(db, 'rotas', routeId);
-      await updateDoc(routeRef, {
+      await updateDoc(routeRef, sanitizeForFirestore({
         status: isActive ? 'active' : 'draft'
-      });
+      }));
     } catch (err) {
       console.error('[setIsRouteActive] Firestore write error:', err);
     }

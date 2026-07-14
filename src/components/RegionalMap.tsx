@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useState } from 'react';
-import { Truck, MapPin, Navigation, Warehouse, Play, Signal, Eye, Info } from 'lucide-react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { Truck, MapPin, Navigation, Warehouse, Play, Signal, Eye, Info, CheckCircle2 } from 'lucide-react';
 import { Rota, GPSLocation, Parada, RouteUser, UserRole } from '../types';
 
 interface RegionalMapProps {
@@ -17,6 +17,26 @@ interface RegionalMapProps {
 export default function RegionalMap({ rotas, locations, region, breadcrumbs }: RegionalMapProps) {
   const [selectedDriverId, setSelectedDriverId] = useState<string | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<{ label: string; details: string; x: number; y: number } | null>(null);
+  const [completionNotification, setCompletionNotification] = useState<string | null>(null);
+
+  // Keep track of previously active routes to detect the exact moment they get completed
+  const prevRotasRef = useRef<Rota[]>([]);
+
+  // Effect to verify if a driver in this region completed their route
+  useEffect(() => {
+    if (prevRotasRef.current && prevRotasRef.current.length > 0) {
+      rotas.forEach(currentRoute => {
+        if (currentRoute.region === region) {
+          const previousRoute = prevRotasRef.current.find(r => r.id === currentRoute.id);
+          if (previousRoute && previousRoute.status !== 'completed' && currentRoute.status === 'completed') {
+            // Driver completed the route!
+            setCompletionNotification(`O motorista ${currentRoute.driverName} concluiu a rota "${currentRoute.name}". As informações de rota foram limpas do mapa regional.`);
+          }
+        }
+      });
+    }
+    prevRotasRef.current = rotas;
+  }, [rotas, region]);
 
   // Filter routes of this region
   const regionalRoutes = useMemo(() => {
@@ -64,6 +84,24 @@ export default function RegionalMap({ rotas, locations, region, breadcrumbs }: R
 
   return (
     <div id="regional-visual-map" className="bg-slate-950 rounded-xl relative border border-slate-900 overflow-hidden flex flex-col h-full select-text shadow-sm">
+      
+      {/* Floating Completion Clean alert Toast */}
+      {completionNotification && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 bg-emerald-800 text-white px-5 py-3 rounded-xl shadow-2xl border border-emerald-650 z-[9999] flex items-center gap-3 animate-in fade-in slide-in-from-top-4 duration-300 max-w-sm text-xs leading-normal">
+          <CheckCircle2 className="w-5 h-5 shrink-0 text-emerald-300 animate-bounce" />
+          <div className="flex-1">
+            <span className="font-bold block text-[10px] uppercase tracking-wider text-emerald-200">Limpeza Automática Concluída</span>
+            <p className="text-[11px] font-medium text-white/95 mt-0.5">{completionNotification}</p>
+          </div>
+          <button 
+            type="button"
+            onClick={() => setCompletionNotification(null)}
+            className="text-white hover:text-emerald-200 transition-colors p-1 cursor-pointer font-mono"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       
       {/* Absolute Header Overlay */}
       <div className="absolute top-3 left-4 right-4 flex items-center justify-between z-10 pointer-events-none">
