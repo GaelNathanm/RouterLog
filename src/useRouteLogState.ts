@@ -920,7 +920,11 @@ export function useRouteLogState() {
       return { success: true };
     } catch (error: any) {
       console.error('[Firebase Auth] Error sending email sign in link:', error);
-      return { success: false, error: error.message };
+      let errMsg = error.message;
+      if (error.code === 'auth/unauthorized-domain') {
+        errMsg = 'O domínio atual não está autorizado nas configurações de autenticação do Firebase. Por favor, adicione este domínio (e o domínio de visualização) na seção de Domínios Autorizados do painel do Firebase.';
+      }
+      return { success: false, error: errMsg };
     }
   };
 

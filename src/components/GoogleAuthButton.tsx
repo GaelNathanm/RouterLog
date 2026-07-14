@@ -56,6 +56,8 @@ export default function GoogleAuthButton({ onAuthError, isLoading, setIsLoading 
         userFriendlyMsg = 'O fluxo de autenticação foi fechado antes de ser concluído.';
       } else if (err.code === 'auth/cancelled-popup-request') {
         userFriendlyMsg = 'A requisição do pop-up foi cancelada.';
+      } else if (err.code === 'auth/unauthorized-domain') {
+        userFriendlyMsg = 'O domínio atual não está autorizado nas configurações de autenticação do Firebase. Por favor, adicione este domínio (e o domínio de visualização) na seção de Domínios Autorizados do painel do Firebase.';
       }
       
       if (onAuthError) {

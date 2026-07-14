@@ -10,22 +10,16 @@ import { getAuth } from 'firebase/auth';
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 import appletConfig from '../firebase-applet-config.json';
 
-// Configuration utilizing Vite env variables with fallback to applet configuration
+// Configuration prioritizing the local config (which is updated live by the platform)
+// with fallbacks to environment variables and exact production credentials.
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || appletConfig.apiKey || "AIzaSyCKrrww2NhinEq2a3OEEydfBrkovUrYxuI",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || appletConfig.authDomain || "dlojinha.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || appletConfig.projectId || "dlojinha",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || appletConfig.storageBucket || "dlojinha.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || appletConfig.messagingSenderId || "841386070930",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || appletConfig.appId || "1:841386070930:web:add53a4948d6b26edb274b",
-  databaseId: (() => {
-    const envDbId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
-    // Ignore Google Analytics measurement ID prefixes (e.g. G-RCXBHG2S7F) or standard .env.example placeholders
-    if (!envDbId || envDbId.startsWith('G-') || envDbId.includes('nome_do_banco')) {
-      return appletConfig.firestoreDatabaseId || undefined;
-    }
-    return envDbId;
-  })(),
+  apiKey: appletConfig.apiKey || import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCKrrww2NhinEq2a3OEEydfBrkovUrYxuI",
+  authDomain: appletConfig.authDomain || import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "dlojinha.firebaseapp.com",
+  projectId: appletConfig.projectId || import.meta.env.VITE_FIREBASE_PROJECT_ID || "dlojinha",
+  storageBucket: appletConfig.storageBucket || import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "dlojinha.firebasestorage.app",
+  messagingSenderId: appletConfig.messagingSenderId || import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "841386070930",
+  appId: appletConfig.appId || import.meta.env.VITE_FIREBASE_APP_ID || "1:841386070930:web:978edb41c30235c1db274b",
+  databaseId: appletConfig.firestoreDatabaseId || import.meta.env.VITE_FIREBASE_DATABASE_ID || "ai-studio-routelog-e2c2a647-eccf-4dd5-a051-f6a02c26de31",
 };
 
 console.log('[Firebase config] Initializing core with project ID:', firebaseConfig.projectId);
