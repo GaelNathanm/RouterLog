@@ -350,7 +350,6 @@ export function AdminDashboard({
   const [editedEmail, setEditedEmail] = useState('');
   const [editedPhone, setEditedPhone] = useState('');
   const [editedRegion, setEditedRegion] = useState('');
-  const [editedRole, setEditedRole] = useState<UserRole>(UserRole.MOTORISTA);
 
   // States for Region Administration
   const [regId, setRegId] = useState('');
@@ -1014,7 +1013,7 @@ export function AdminDashboard({
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div>
                           <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Região Operacional</label>
                           <select 
@@ -1029,45 +1028,32 @@ export function AdminDashboard({
                             ))}
                           </select>
                         </div>
-                        <div>
-                          <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Função / Cargo (Papel)</label>
-                          <select 
-                            value={editedRole}
-                            onChange={e => setEditedRole(Number(e.target.value) as UserRole)}
-                            className="w-full border border-slate-200 bg-white rounded-xl p-2 font-medium text-xs text-slate-800 focus:ring-1 focus:ring-rose-500"
-                          >
-                            <option value={UserRole.MOTORISTA}>Motorista</option>
-                            <option value={UserRole.GERENTE}>Gerente de Logística</option>
-                            <option value={UserRole.VENDEDOR}>Vendedor / Promotor</option>
-                            <option value={UserRole.ADMIN}>Administrador</option>
-                          </select>
-                        </div>
+
+                        {user.role === UserRole.MOTORISTA && (
+                          <>
+                            <div>
+                              <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Placa do Veículo</label>
+                              <input 
+                                type="text"
+                                value={editedPlate}
+                                onChange={e => setEditedPlate(e.target.value)}
+                                className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-[11.5px] uppercase tracking-wider text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Modelo do Veículo</label>
+                              <input 
+                                type="text"
+                                value={editedVehicleModel}
+                                onChange={e => setEditedVehicleModel(e.target.value)}
+                                className="w-full border border-slate-200 bg-white rounded-xl p-2 font-medium text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
+                              />
+                            </div>
+                          </>
+                        )}
                       </div>
 
-                      {Number(editedRole) === UserRole.MOTORISTA && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-slate-100 pt-2.5">
-                          <div>
-                            <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Placa do Veículo</label>
-                            <input 
-                              type="text"
-                              value={editedPlate}
-                              onChange={e => setEditedPlate(e.target.value)}
-                              className="w-full border border-slate-200 bg-white rounded-xl p-2 font-mono text-[11.5px] uppercase tracking-wider text-slate-850 focus:ring-1 focus:ring-indigo-500"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Modelo do Veículo</label>
-                            <input 
-                              type="text"
-                              value={editedVehicleModel}
-                              onChange={e => setEditedVehicleModel(e.target.value)}
-                              className="w-full border border-slate-200 bg-white rounded-xl p-2 font-medium text-[11.5px] text-slate-850 focus:ring-1 focus:ring-indigo-500"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {Number(editedRole) === UserRole.MOTORISTA && (
+                      {user.role === UserRole.MOTORISTA && (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-slate-200 pt-2.5">
                           <div>
                             <label className="block text-[9px] text-slate-450 uppercase font-black tracking-wider mb-1">Número CNH</label>
@@ -1103,19 +1089,17 @@ export function AdminDashboard({
                         <button
                           type="button"
                           onClick={() => {
-                            const isDriver = Number(editedRole) === UserRole.MOTORISTA;
                             const updatedUser = {
                               ...user,
                               name: editedName,
                               email: editedEmail,
                               phone: editedPhone,
                               region: editedRegion,
-                              role: Number(editedRole),
-                              plate: isDriver ? editedPlate : '',
-                              vehicleModel: isDriver ? editedVehicleModel : '',
-                              cnh: isDriver ? editedCnh : '',
-                              cnhCategory: isDriver ? editedCnhCategory : '',
-                              cnhExpiration: isDriver ? editedCnhExpiration : ''
+                              plate: editedPlate,
+                              vehicleModel: editedVehicleModel,
+                              cnh: editedCnh,
+                              cnhCategory: editedCnhCategory,
+                              cnhExpiration: editedCnhExpiration
                             } as any;
                             onUpdateUser(updatedUser);
                             setEditingUserId(null);
@@ -1197,7 +1181,6 @@ export function AdminDashboard({
                               setEditedEmail(user.email);
                               setEditedPhone(user.phone);
                               setEditedRegion((user as any).region || (regions[0]?.id || 'GV1'));
-                              setEditedRole(user.role);
                               setEditedPlate((user as any).plate || '');
                               setEditedVehicleModel((user as any).vehicleModel || '');
                               setEditedCnh((user as any).cnh || '');

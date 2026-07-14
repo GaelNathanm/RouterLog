@@ -23,7 +23,6 @@ import { NetworkGpsStatusWidget } from './components/NetworkGpsStatusWidget';
 import { motion, AnimatePresence } from 'motion/react';
 import ToastContainer from './components/ToastContainer';
 import { showToast } from './utils/toast';
-import { hasFirebaseConfigError, missingFirebaseEnvVars } from './firebaseConfig';
 
 export default function App() {
   const {
@@ -50,7 +49,6 @@ export default function App() {
     handleSaveClient,
     handleDeleteClient,
     handleLogin,
-    sendPasswordlessSignInLink,
     handleRegister,
     handleLogout,
     handleImpersonate,
@@ -104,18 +102,6 @@ export default function App() {
     return () => {
       window.alert = originalAlert;
     };
-  }, []);
-
-  useEffect(() => {
-    if (hasFirebaseConfigError) {
-      const errorDetail = missingFirebaseEnvVars.join(', ');
-      console.error('[Firebase Config Error] Required variables missing:', errorDetail);
-      showToast(
-        `Configuração do Firebase ausente ou incompleta. Variáveis ausentes: ${errorDetail}`,
-        'error',
-        'Erro de Configuração'
-      );
-    }
   }, []);
 
   useEffect(() => {
@@ -176,23 +162,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-800">
       
-      {hasFirebaseConfigError && (
-        <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 text-sm text-amber-800 flex items-center justify-between gap-4 shadow-sm font-medium">
-          <div className="flex items-center gap-2.5">
-            <AlertTriangle className="w-5 h-5 text-amber-600 animate-bounce flex-shrink-0" />
-            <span>
-              <strong>Atenção:</strong> Configuração do Firebase incompleta. Variáveis de ambiente obrigatórias ausentes:{' '}
-              <code className="bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded text-xs font-mono">
-                {missingFirebaseEnvVars.join(', ')}
-              </code>
-            </span>
-          </div>
-          <span className="text-xs bg-amber-200/60 text-amber-900 border border-amber-300 px-2 py-0.5 rounded font-bold whitespace-nowrap">
-            Verifique o .env ou Configurações do Applet
-          </span>
-        </div>
-      )}
-
       {/* Top Universal Navbar */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm px-6 py-4">
         <div className={`mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 transition-all duration-300 ${isWidescreen ? 'max-w-full px-2 lg:px-6' : 'max-w-7xl'}`}>
@@ -314,7 +283,6 @@ export default function App() {
                     users={users}
                     regions={regions}
                     onLogin={handleLogin}
-                    sendPasswordlessSignInLink={sendPasswordlessSignInLink}
                     onRegister={handleRegister}
                     onReset={resetAllData}
                     currentUser={currentUser}

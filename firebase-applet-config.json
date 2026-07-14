@@ -3,10 +3,8 @@
   "appId": "1:841386070930:web:978edb41c30235c1db274b",
   "apiKey": "AIzaSyCKrrww2NhinEq2a3OEEydfBrkovUrYxuI",
   "authDomain": "dlojinha.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-routelog-e2c2a647-eccf-4dd5-a051-f6a02c26de31",
+  "firestoreDatabaseId": "ai-studio-e2c2a647-eccf-4dd5-a051-f6a02c26de31",
   "storageBucket": "dlojinha.firebasestorage.app",
   "messagingSenderId": "841386070930",
-  "measurementId": "G-FQL4K4R2D1",
-  "oAuthClientId": "841386070930-ivlcl2tmp0o2r6jf65nusd8tta25lv8t.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "measurementId": ""
 }

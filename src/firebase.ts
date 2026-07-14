@@ -119,38 +119,16 @@ function markQuotaExceeded() {
 
 function checkQuotaError(err: any): boolean {
   const errMsg = err instanceof Error ? err.message : String(err);
-  const errMsgLower = errMsg.toLowerCase();
-  
-  // These are true, permanent quota or billing errors for this session
-  const isGenuineQuotaError = 
-    errMsgLower.includes('quota') || 
-    errMsgLower.includes('exhausted') || 
-    errMsgLower.includes('billing') ||
-    (err && err.code === 'resource-exhausted');
-
-  // These are temporary network/offline issues or failed preconditions
-  const isTransientNetworkError = 
-    errMsgLower.includes('unavailable') ||
-    errMsgLower.includes('offline') ||
-    errMsgLower.includes('network') ||
-    errMsgLower.includes('failed to get document') ||
-    errMsgLower.includes('failed-precondition') ||
-    (err && (
-      err.code === 'unavailable' || 
-      err.code === 'failed-precondition'
-    ));
-
-  if (isGenuineQuotaError) {
+  if (
+    errMsg.toLowerCase().includes('quota') || 
+    errMsg.toLowerCase().includes('exhausted') || 
+    errMsg.toLowerCase().includes('billing') ||
+    errMsg.toLowerCase().includes('unavailable') ||
+    (err && err.code === 'resource-exhausted')
+  ) {
     markQuotaExceeded();
     return true;
   }
-
-  if (isTransientNetworkError) {
-    // Return true to dynamically fall back to local storage for the failing call,
-    // but do NOT call markQuotaExceeded() to prevent permanent session-level lockups.
-    return true;
-  }
-
   return false;
 }
 
@@ -252,15 +230,6 @@ async function testConnection() {
     // Attempt a silent cache-first fetch to ensure SDK is initialized
     await getDoc(doc(db, 'test', 'connection'));
     console.log('[Firestore] Local database cache initialized successfully.');
-    
-    // Self-healing: Connection succeeded, clear any prior transient quota/offline flag
-    if (isQuotaExceeded) {
-      isQuotaExceeded = false;
-      try {
-        sessionStorage.removeItem('routelog_quota_exceeded');
-        console.log('[Firestore] Connection established successfully! Cleared prior persistent offline/quota exceeded flags.');
-      } catch (e) {}
-    }
   } catch (error) {
     checkQuotaError(error);
     console.log('[Firestore] Initialized with persistent offline local cache.');

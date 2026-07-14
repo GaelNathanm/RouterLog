@@ -42,22 +42,12 @@ export default function GoogleAuthButton({ onAuthError, isLoading, setIsLoading 
       console.log('[Firebase Auth] Google Sign-In success for email:', result.user.email);
       showToast('Autenticação Google realizada com sucesso!', 'success', 'Google Auth');
     } catch (err: any) {
-      const isUserCancel = err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request';
-      if (isUserCancel) {
-        console.warn('[Google Auth Info]: Flow cancelled or closed by user.', err);
-      } else {
-        console.error('[Google Auth Error]:', err);
-      }
-      
+      console.error('[Google Auth Error]:', err);
       let userFriendlyMsg = err.message || 'Erro ao iniciar o fluxo de login via Google.';
       if (err.code === 'auth/popup-blocked') {
         userFriendlyMsg = 'O pop-up de login foi bloqueado pelo seu navegador. Por favor, permita pop-ups ou abra o app em uma nova aba.';
       } else if (err.code === 'auth/popup-closed-by-user') {
-        userFriendlyMsg = 'O fluxo de autenticação foi fechado antes de ser concluído.';
-      } else if (err.code === 'auth/cancelled-popup-request') {
-        userFriendlyMsg = 'A requisição do pop-up foi cancelada.';
-      } else if (err.code === 'auth/unauthorized-domain') {
-        userFriendlyMsg = 'O domínio atual não está autorizado nas configurações de autenticação do Firebase. Por favor, adicione este domínio (e o domínio de visualização) na seção de Domínios Autorizados do painel do Firebase.';
+        userFriendlyMsg = 'O fluxo de autenticação foi cancelado pelo usuário.';
       }
       
       if (onAuthError) {
