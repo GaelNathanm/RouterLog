@@ -12,21 +12,17 @@ import appletConfig from '../firebase-applet-config.json';
 
 // Configuration utilizing Vite env variables with fallback to applet configuration
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCKrrww2NhinEq2a3OEEydfBrkovUrYxuI" || appletConfig.apiKey,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "dlojinha.firebaseapp.com" || appletConfig.authDomain,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "dlojinha" || appletConfig.projectId,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "dlojinha.firebasestorage.app" || appletConfig.storageBucket,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "841386070930" || appletConfig.messagingSenderId,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:841386070930:web:add53a4948d6b26edb274b" || appletConfig.appId,
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || appletConfig.apiKey || "AIzaSyCKrrww2NhinEq2a3OEEydfBrkovUrYxuI",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || appletConfig.authDomain || "dlojinha.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || appletConfig.projectId || "dlojinha",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || appletConfig.storageBucket || "dlojinha.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || appletConfig.messagingSenderId || "841386070930",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || appletConfig.appId || "1:841386070930:web:add53a4948d6b26edb274b",
   databaseId: (() => {
     const envDbId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
     // Ignore Google Analytics measurement ID prefixes (e.g. G-RCXBHG2S7F) or standard .env.example placeholders
     if (!envDbId || envDbId.startsWith('G-') || envDbId.includes('nome_do_banco')) {
-      const activeProj = import.meta.env.VITE_FIREBASE_PROJECT_ID || "dlojinha";
-      if (activeProj === "dlojinha") {
-        return undefined;
-      }
-      return appletConfig.firestoreDatabaseId;
+      return appletConfig.firestoreDatabaseId || undefined;
     }
     return envDbId;
   })(),

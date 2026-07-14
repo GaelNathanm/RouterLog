@@ -7,7 +7,10 @@ import { useState, useEffect, useRef } from 'react';
 import { 
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  sendSignInLinkToEmail,
+  isSignInWithEmailLink,
+  signInWithEmailLink
 } from 'firebase/auth';
 import { 
   seedDatabaseIfEmpty, saveCloudUser, saveCloudRoute, deleteCloudRoute, 
@@ -234,6 +237,30 @@ export function useRouteLogState() {
         }
       }
     };
+
+    const checkEmailSignInLink = async () => {
+      if (auth && isSignInWithEmailLink(auth, window.location.href)) {
+        let email = window.localStorage.getItem('emailForSignIn');
+        if (!email) {
+          email = window.prompt('Para concluir o login sem senha, confirme seu e-mail cadastrado:');
+        }
+        if (email) {
+          try {
+            console.log('[Firebase Auth] Completing passwordless email link sign-in for:', email);
+            const result = await signInWithEmailLink(auth, email, window.location.href);
+            window.localStorage.removeItem('emailForSignIn');
+            console.log('[Firebase Auth] Email link login successful!', result.user);
+            
+            // Cleanup query params
+            const cleanUrl = window.location.origin + window.location.pathname;
+            window.history.replaceState({}, document.title, cleanUrl);
+          } catch (err: any) {
+            console.error('[Firebase Auth] Error signing in with email link:', err);
+          }
+        }
+      }
+    };
+    checkEmailSignInLink();
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       console.log('[Firebase Auth State Changed]:', firebaseUser);
@@ -855,6 +882,48 @@ export function useRouteLogState() {
   }, [locations, regions, users]);
 
   // Auth Operations
+  const sendPasswordlessSignInLink = async (email: string) => {
+    if (!auth) {
+      return { success: false, error: 'Firebase Auth não está configurado ou inicializado.' };
+    }
+
+    let matched = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (!matched) {
+      matched = await getCloudUserByEmail(email);
+    }
+
+    if (matched) {
+      if (matched.status === 'banned') {
+        return { success: false, error: 'Esta conta foi permanentemente banida da plataforma.' };
+      }
+      if (matched.status === 'suspended') {
+        return { success: false, error: 'Esta conta foi suspensa temporariamente por auditoria.' };
+      }
+    }
+
+    const actionCodeSettings = {
+      url: window.location.origin,
+      handleCodeInApp: true,
+      iOS: {
+        bundleId: 'com.example.ios'
+      },
+      android: {
+        packageName: 'com.example.android',
+        installApp: true,
+        minimumVersion: '12'
+      }
+    };
+
+    try {
+      await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+      window.localStorage.setItem('emailForSignIn', email);
+      return { success: true };
+    } catch (error: any) {
+      console.error('[Firebase Auth] Error sending email sign in link:', error);
+      return { success: false, error: error.message };
+    }
+  };
+
   const handleLogin = async (email: string, password?: string, role?: UserRole) => {
     console.log('[Auth Diagnostic] handleLogin triggered:', { email, password, role });
     
@@ -1697,6 +1766,7 @@ export function useRouteLogState() {
     impersonatingUser,
     activeSessionUser,
     handleLogin,
+    sendPasswordlessSignInLink,
     handleRegister,
     handleLogout,
     handleImpersonate,

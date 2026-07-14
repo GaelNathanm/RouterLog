@@ -49,6 +49,7 @@ export default function App() {
     handleSaveClient,
     handleDeleteClient,
     handleLogin,
+    sendPasswordlessSignInLink,
     handleRegister,
     handleLogout,
     handleImpersonate,
@@ -283,6 +284,7 @@ export default function App() {
                     users={users}
                     regions={regions}
                     onLogin={handleLogin}
+                    sendPasswordlessSignInLink={sendPasswordlessSignInLink}
                     onRegister={handleRegister}
                     onReset={resetAllData}
                     currentUser={currentUser}

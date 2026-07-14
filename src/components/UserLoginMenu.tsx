@@ -13,6 +13,7 @@ interface LoginMenuProps {
   users: RouteUser[];
   regions?: Region[];
   onLogin: (email: string, password?: string) => Promise<{ success: boolean; error?: string; user?: RouteUser }> | any;
+  sendPasswordlessSignInLink?: (email: string) => Promise<{ success: boolean; error?: string }>;
   onRegister: (data: Partial<RouteUser> & { password?: string }) => Promise<RouteUser> | any;
   onReset: () => void;
   currentUser: RouteUser | null;
@@ -21,7 +22,7 @@ interface LoginMenuProps {
   onCollapse?: () => void;
 }
 
-export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogin, onRegister, onReset, currentUser, onLogout, onViewProfile, onCollapse }: LoginMenuProps) {
+export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogin, sendPasswordlessSignInLink, onRegister, onReset, currentUser, onLogout, onViewProfile, onCollapse }: LoginMenuProps) {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -29,6 +30,12 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
+
+  // Passwordless email link states
+  const [isPasswordlessMode, setIsPasswordlessMode] = useState(false);
+  const [passwordlessEmail, setPasswordlessEmail] = useState('');
+  const [passwordlessSent, setPasswordlessSent] = useState(false);
+  const [isPasswordlessLoading, setIsPasswordlessLoading] = useState(false);
 
   // Form states
   const [name, setName] = useState('');
@@ -126,6 +133,37 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
       setErrorMsg(err.message || 'Erro de autenticação.');
     } finally {
       setIsAuthenticating(false);
+    }
+  };
+
+  const submitPasswordlessLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setPasswordlessSent(false);
+
+    if (!passwordlessEmail) {
+      setErrorMsg('Por favor, informe seu e-mail cadastrado.');
+      return;
+    }
+
+    if (!sendPasswordlessSignInLink) {
+      setErrorMsg('Serviço de login sem senha não configurado.');
+      return;
+    }
+
+    setIsPasswordlessLoading(true);
+    try {
+      const result = await sendPasswordlessSignInLink(passwordlessEmail);
+      if (result.success) {
+        setPasswordlessSent(true);
+        setPasswordlessEmail('');
+      } else {
+        setErrorMsg(result.error || 'Erro ao enviar o link de acesso.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro inesperado.');
+    } finally {
+      setIsPasswordlessLoading(false);
     }
   };
 
@@ -455,35 +493,86 @@ export default function UserLoginMenu({ users, regions = INITIAL_REGIONS, onLogi
             </div>
           )}
 
-          {/* Real Credentials Login Form */}
-          <form onSubmit={submitCredentialsLogin} className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-sm mb-4 space-y-2.5">
-            <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Acesso Credenciais Reais • Firebase</span>
-            <div className="space-y-1.5">
-              <input 
-                type="email" 
-                placeholder="E-mail Real" 
-                value={loginEmail}
-                onChange={e => setLoginEmail(e.target.value)}
-                className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
-                required
-              />
-              <input 
-                type="password" 
-                placeholder="Senha de Acesso" 
-                value={loginPassword}
-                onChange={e => setLoginPassword(e.target.value)}
-                className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
-                required
-              />
-            </div>
+          {/* Form Selection Toggle */}
+          <div className="flex bg-slate-200/60 p-1 rounded-lg text-xs font-semibold mb-4">
             <button
-              type="submit"
-              disabled={isAuthenticating}
-              className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase rounded-lg shadow-sm transition-all text-center tracking-wider flex items-center justify-center gap-1 cursor-pointer animate-none"
+              type="button"
+              onClick={() => { setIsPasswordlessMode(false); setPasswordlessSent(false); }}
+              className={`flex-1 py-1.5 rounded-md text-center transition-all cursor-pointer ${!isPasswordlessMode ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
             >
-              {isAuthenticating ? 'Autenticando...' : 'Entrar com Conta Real'}
+              Entrar com Senha
             </button>
-          </form>
+            <button
+              type="button"
+              onClick={() => { setIsPasswordlessMode(true); }}
+              className={`flex-1 py-1.5 rounded-md text-center transition-all cursor-pointer ${isPasswordlessMode ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
+            >
+              Link por E-mail (Sem Senha)
+            </button>
+          </div>
+
+          {isPasswordlessMode ? (
+            /* Passwordless Email Link Login Form */
+            <form onSubmit={submitPasswordlessLogin} className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-sm mb-4 space-y-2.5">
+              <span className="text-[9px] font-black text-indigo-600 block uppercase tracking-wider font-mono">Acesso Sem Senha • Firebase Link</span>
+              
+              {passwordlessSent ? (
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-lg text-emerald-800 text-[11px] leading-relaxed">
+                  📧 <strong className="font-bold">Link enviado!</strong> Verifique a caixa de entrada do seu e-mail para concluir a autenticação com segurança.
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <input 
+                      type="email" 
+                      placeholder="Seu E-mail Cadastrado" 
+                      value={passwordlessEmail}
+                      onChange={e => setPasswordlessEmail(e.target.value)}
+                      className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={isPasswordlessLoading}
+                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase rounded-lg shadow-sm transition-all text-center tracking-wider flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    {isPasswordlessLoading ? 'Enviando link...' : 'Enviar Link de Acesso'}
+                  </button>
+                </>
+              )}
+            </form>
+          ) : (
+            /* Real Credentials Login Form */
+            <form onSubmit={submitCredentialsLogin} className="bg-white border border-slate-200/80 rounded-xl p-3.5 shadow-sm mb-4 space-y-2.5">
+              <span className="text-[9px] font-black text-blue-600 block uppercase tracking-wider font-mono">Acesso Credenciais Reais • Firebase</span>
+              <div className="space-y-1.5">
+                <input 
+                  type="email" 
+                  placeholder="E-mail Real" 
+                  value={loginEmail}
+                  onChange={e => setLoginEmail(e.target.value)}
+                  className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
+                  required
+                />
+                <input 
+                  type="password" 
+                  placeholder="Senha de Acesso" 
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                  className="w-full border border-slate-200 p-2 rounded-lg text-xs bg-white focus:outline-none focus:border-blue-500"
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isAuthenticating}
+                className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-[10px] uppercase rounded-lg shadow-sm transition-all text-center tracking-wider flex items-center justify-center gap-1 cursor-pointer animate-none"
+              >
+                {isAuthenticating ? 'Autenticando...' : 'Entrar com Conta Real'}
+              </button>
+            </form>
+          )}
 
           <div className="mb-4">
             <GoogleAuthButton onAuthError={(err) => setErrorMsg(err)} />
