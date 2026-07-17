@@ -11,6 +11,7 @@ import { Loader2, AlertCircle, MapPin, Phone, Compass, Info, CheckCircle2, Alert
 
 interface MapClientesProps {
   region: string;
+  clients?: Cliente[];
 }
 
 // Function to safely extract coordinates from various GeoPoint formats or direct lat/lng fields
@@ -128,7 +129,7 @@ function FitMapBounds({ clientsWithCoords }: { clientsWithCoords: Cliente[] }) {
   return null;
 }
 
-export default function MapClientes({ region }: MapClientesProps) {
+export default function MapClientes({ region, clients: propClients }: MapClientesProps) {
   const [clients, setClients] = useState<Cliente[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -143,8 +144,19 @@ export default function MapClientes({ region }: MapClientesProps) {
 
   const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
 
-  // 1. Fetch Clients from Firestore with Real-Time subscription
+  // 1. Sync state directly if clients are provided as props
   useEffect(() => {
+    if (propClients !== undefined) {
+      setClients(propClients);
+      setIsLoading(false);
+      setError(null);
+    }
+  }, [propClients]);
+
+  // 2. Fetch Clients from Firestore with Real-Time subscription only if not provided by props
+  useEffect(() => {
+    if (propClients !== undefined) return;
+
     setIsLoading(true);
     setError(null);
 
@@ -156,13 +168,27 @@ export default function MapClientes({ region }: MapClientesProps) {
       },
       (err) => {
         console.error('Error fetching clients in MapClientes:', err);
+        
+        // Attempt to load from localStorage cache first to prevent blocking red-screens
+        try {
+          const cached = localStorage.getItem('routelog_db_clients');
+          if (cached) {
+            console.log('[MapClientes Fallback] Successfully restored client coordinates from offline cache.');
+            setClients(JSON.parse(cached));
+            setIsLoading(false);
+            return;
+          }
+        } catch (e) {
+          console.warn('[MapClientes Cache Restore Failed]', e);
+        }
+
         setError(err.message || 'Falha ao buscar os clientes do Firestore.');
         setIsLoading(false);
       }
     );
 
     return () => unsubscribe();
-  }, []);
+  }, [propClients]);
 
   // 2. Filter clients based on UI options
   const filteredClients = useMemo(() => {

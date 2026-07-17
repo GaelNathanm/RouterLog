@@ -5,7 +5,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, animate } from 'motion/react';
-import L from 'leaflet';
+import { APIProvider, Map, AdvancedMarker, InfoWindow, useMap } from '@vis.gl/react-google-maps';
 import { Rota, GPSLocation, Parada, Region, UserRole } from '../types';
 import { INITIAL_REGIONS } from '../mockData';
 import { 
@@ -25,6 +25,80 @@ interface RouteMapProps {
   onStopClick?: (stop: Parada) => void;
 }
 
+// Safely fetch Google Maps API key from environment configuration
+const API_KEY =
+  process.env.GOOGLE_MAPS_PLATFORM_KEY ||
+  (import.meta as any).env?.VITE_GOOGLE_MAPS_PLATFORM_KEY ||
+  (globalThis as any).GOOGLE_MAPS_PLATFORM_KEY ||
+  '';
+const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
+
+// Custom component to handle dynamic rendering of route polylines on Google Maps
+function MapPolyline({ path, color }: { path: google.maps.LatLngLiteral[]; color: string; key?: React.Key }) {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (!map || path.length < 2 || typeof google === 'undefined') return;
+    
+    const polyline = new google.maps.Polyline({
+      path,
+      geodesic: true,
+      strokeColor: color,
+      strokeOpacity: 0.8,
+      strokeWeight: 4,
+      map
+    });
+    
+    return () => {
+      polyline.setMap(null);
+    };
+  }, [map, path, color]);
+  
+  return null;
+}
+
+// Custom component to dynamically center and fit map boundaries to encapsulate active routes and points
+function FitMapBounds({ routes, locations, singleRouteMode, singleDriverLocation }: {
+  routes: Rota[];
+  locations: { [drvId: string]: GPSLocation };
+  singleRouteMode?: Rota | null;
+  singleDriverLocation?: GPSLocation | null;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || typeof google === 'undefined' || routes.length === 0) return;
+
+    const bounds = new google.maps.LatLngBounds();
+    let hasPoints = false;
+
+    routes.forEach(r => {
+      if (r.originLat && r.originLng && !isNaN(r.originLat) && !isNaN(r.originLng)) {
+        bounds.extend({ lat: r.originLat, lng: r.originLng });
+        hasPoints = true;
+      }
+      r.stops.forEach(s => {
+        if (s.lat && s.lng && !isNaN(s.lat) && !isNaN(s.lng) && s.lat !== 0 && s.lng !== 0) {
+          bounds.extend({ lat: s.lat, lng: s.lng });
+          hasPoints = true;
+        }
+      });
+
+      const drvLoc = singleRouteMode && singleDriverLocation ? singleDriverLocation : locations[r.driverId];
+      if (drvLoc && drvLoc.lat && drvLoc.lng && !isNaN(drvLoc.lat) && !isNaN(drvLoc.lng)) {
+        bounds.extend({ lat: drvLoc.lat, lng: drvLoc.lng });
+        hasPoints = true;
+      }
+    });
+
+    if (hasPoints) {
+      map.fitBounds(bounds, { top: 60, bottom: 60, left: 60, right: 60 });
+    }
+  }, [map, routes, locations, singleRouteMode, singleDriverLocation]);
+
+  return null;
+}
+
 export default function RouteMap({ 
   rotas, 
   locations, 
@@ -40,14 +114,18 @@ export default function RouteMap({
   // States
   const [selectedRegion, setSelectedRegion] = useState<string>(currentUserRegion || 'all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
-  const [mapType, setMapType] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
   const [selectedStop, setSelectedStop] = useState<{ stop: Parada; routeName: string } | null>(null);
   const [hoveredDriver, setHoveredDriver] = useState<{ driverName: string; location: GPSLocation; plate: string } | null>(null);
   const [driverFilter, setDriverFilter] = useState<{ [drvId: string]: boolean }>({});
   const [completionNotification, setCompletionNotification] = useState<string | null>(null);
 
-  // Keep track of previously active routes to detect the exact moment they get completed
+  // Keep track of previously active routes to detect when they complete
   const prevRotasRef = useRef<Rota[]>([]);
+
+  // Local physical layout fallback states
+  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
+  const [useFallbackMap, setUseFallbackMap] = useState<boolean>(false);
+  const [dashOffset, setDashOffset] = useState<number>(0);
 
   // Effect to verify if a driver has finished their route and clear map automatically
   useEffect(() => {
@@ -63,17 +141,7 @@ export default function RouteMap({
     prevRotasRef.current = rotas;
   }, [rotas]);
 
-  // Leaflet Map References
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const markersGroupRef = useRef<L.FeatureGroup | null>(null);
-
-  // Local physical layout fallback states
-  const [mapLoadError, setMapLoadError] = useState<string | null>(null);
-  const [useFallbackMap, setUseFallbackMap] = useState<boolean>(false);
-  const [dashOffset, setDashOffset] = useState<number>(0);
-
-  // Vector animation trace
+  // Vector animation trace for fallback SVG
   useEffect(() => {
     let animationId: number;
     const tick = () => {
@@ -188,289 +256,6 @@ export default function RouteMap({
     };
   }, [bounds]);
 
-  // Leaflet Rendering and Sync Effect
-  useEffect(() => {
-    if (useFallbackMap) {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-      return;
-    }
-
-    if (!mapContainerRef.current) return;
-
-    // Initialize Map Instance if not present
-    if (!mapInstanceRef.current) {
-      mapInstanceRef.current = L.map(mapContainerRef.current, {
-        center: [mapCenter.lat, mapCenter.lng],
-        zoom: singleRouteMode ? 14 : 12,
-        zoomControl: true,
-        attributionControl: false
-      });
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19
-      }).addTo(mapInstanceRef.current);
-
-      markersGroupRef.current = L.featureGroup().addTo(mapInstanceRef.current);
-    }
-
-    const map = mapInstanceRef.current;
-    const group = markersGroupRef.current;
-
-    if (!group) return;
-    group.clearLayers();
-
-    const allCoords: L.LatLng[] = [];
-
-    // 1. CD Warehouse Markers
-    filteredRoutes.forEach(r => {
-      const whIcon = L.divIcon({
-        className: 'custom-wh-marker',
-        html: `
-          <div class="w-8 h-8 rounded-full bg-blue-900 border-2 border-white flex items-center justify-center text-white shadow-lg">
-            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
-            </svg>
-          </div>
-        `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16]
-      });
-      L.marker([r.originLat, r.originLng], { icon: whIcon })
-        .bindPopup(`<strong>CD Principal (${r.region})</strong>`)
-        .addTo(group);
-      
-      allCoords.push(L.latLng(r.originLat, r.originLng));
-    });
-
-    // 2. Stops Delivery Pins
-    filteredRoutes.forEach(r => {
-      r.stops.forEach((stop, idx) => {
-        if (!stop.lat || !stop.lng || isNaN(stop.lat) || isNaN(stop.lng) || (stop.lat === 0 && stop.lng === 0)) {
-          return;
-        }
-
-        const isCompleted = stop.status === 'completed';
-        const isChegando = stop.status === 'Chegando';
-        const isNextTarget = r.status === 'active' && idx === r.currentStopIndex;
-
-        const pinColorClass = isCompleted 
-          ? 'bg-slate-500' 
-          : isChegando
-          ? 'bg-emerald-500 animate-pulse ring-4 ring-emerald-400/30'
-          : isNextTarget 
-          ? 'bg-amber-500 ring-4 ring-amber-400/30 font-black' 
-          : 'bg-blue-650';
-
-        const stopIcon = L.divIcon({
-          className: 'custom-stop-marker',
-          html: `
-            <div class="flex flex-col items-center select-none" style="transform: translateY(-20px)">
-              <div class="w-7 h-7 rounded-full flex items-center justify-center border-2 border-white text-white font-extrabold text-[11px] shadow-lg ${pinColorClass}">
-                ${idx + 1}
-              </div>
-              <div class="w-2 h-2 -mt-1 rotate-45 border-r border-b border-white ${isCompleted ? 'bg-slate-500' : isChegando ? 'bg-emerald-500' : isNextTarget ? 'bg-amber-500' : 'bg-blue-650'}"></div>
-            </div>
-          `,
-          iconSize: [28, 40],
-          iconAnchor: [14, 20]
-        });
-
-        const stopMarker = L.marker([stop.lat, stop.lng], { icon: stopIcon }).addTo(group);
-        
-        // Popups
-        const popupDiv = document.createElement('div');
-        popupDiv.className = 'p-1 font-sans text-xs max-w-sm';
-        popupDiv.innerHTML = `
-          <div class="flex items-center gap-1 text-slate-800 font-bold mb-1 border-b border-slate-100 pb-1 uppercase text-[10px]">
-            <span class="w-3.5 h-3.5 text-blue-600 shrink-0">📍</span>
-            Ponto de Entrega #${idx + 1}
-          </div>
-          <strong class="text-slate-900 font-semibold block">${stop.clientName}</strong>
-          <p class="text-[10px] text-slate-500 mt-1">${stop.address}</p>
-          <div class="mt-2.5 flex items-center justify-between gap-1 text-[9px] font-semibold">
-            <span class="px-1.5 py-0.5 rounded ${isCompleted ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}">
-              ${isCompleted ? 'Entregue ✔' : 'Pendente ⏳'}
-            </span>
-            <span class="text-slate-400 font-normal">Sessão: ${r.name}</span>
-          </div>
-        `;
-
-        // One-tap navigation buttons for drivers
-        const navContainer = document.createElement('div');
-        navContainer.className = 'mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2';
-        
-        const gmapsBtn = document.createElement('button');
-        gmapsBtn.type = 'button';
-        gmapsBtn.className = 'py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center cursor-pointer flex items-center justify-center gap-1';
-        gmapsBtn.innerHTML = `
-          <svg class="w-2.5 h-2.5 text-emerald-600" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" />
-          </svg> Google Maps
-        `;
-        gmapsBtn.onclick = () => {
-          window.open(`https://www.google.com/maps/dir/?api=1&destination=${stop.lat},${stop.lng}`, '_blank');
-        };
-
-        const wazeBtn = document.createElement('button');
-        wazeBtn.type = 'button';
-        wazeBtn.className = 'py-1.5 px-2 bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-800 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center cursor-pointer flex items-center justify-center gap-1';
-        wazeBtn.innerHTML = `
-          <svg class="w-2.5 h-2.5 text-sky-500" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1.61 14.88c-1 .61-2.11-.22-2.11-1.38v-.5h-2a1 1 0 0 1-1-1v-2a1 1 0 0 1 1-1h2v-.5c0-1.16 1.11-2 2.11-1.38l3.19 1.88a1 1 0 0 1 0 1.76z" />
-          </svg> Waze
-        `;
-        wazeBtn.onclick = () => {
-          // Open via schema waze://
-          window.open(`waze://?ll=${stop.lat},${stop.lng}&navigate=yes`, '_self');
-          // Fallback to standard URL in a new tab if scheme doesn't respond instantly
-          setTimeout(() => {
-            window.open(`https://waze.com/ul?ll=${stop.lat},${stop.lng}&navigate=yes`, '_blank');
-          }, 300);
-        };
-
-        navContainer.appendChild(gmapsBtn);
-        navContainer.appendChild(wazeBtn);
-        popupDiv.appendChild(navContainer);
-
-        if (currentUserRole === 2 && !isCompleted && onStopClick) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'mt-3 w-full py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white font-extrabold rounded-lg text-[10px] uppercase shadow-sm text-center cursor-pointer tracking-wider';
-          btn.innerText = 'Confirmar Entrega';
-          btn.onclick = () => {
-            onStopClick(stop);
-            stopMarker.closePopup();
-          };
-          popupDiv.appendChild(btn);
-        }
-
-        stopMarker.bindPopup(popupDiv);
-        allCoords.push(L.latLng(stop.lat, stop.lng));
-      });
-    });
-
-    // 3. Driver Live Marker
-    filteredRoutes.forEach(r => {
-      const drvLoc = singleRouteMode && singleDriverLocation ? singleDriverLocation : locations[r.driverId];
-      if (!drvLoc) return;
-
-      const drvIcon = L.divIcon({
-        className: 'custom-driver-marker',
-        html: `
-          <div class="cursor-pointer bg-indigo-650 border-2 border-white text-white px-2 py-1 rounded-xl shadow-lg flex items-center gap-1.5 font-mono text-[10px] font-bold">
-            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block;">
-              <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2"></path>
-              <path d="M19 18h2a1 1 0 0 0 1-1v-5.14a1 1 0 0 0-.29-.71l-3.3-3.3a1 1 0 0 0-.71-.29H12"></path>
-              <circle cx="7.5" cy="18.5" r="2.5"></circle>
-              <circle cx="16.5" cy="18.5" r="2.5"></circle>
-            </svg>
-            <span>${r.driverName.split(' ')[0]}</span>
-          </div>
-        `,
-        iconSize: [110, 32],
-        iconAnchor: [55, 16]
-      });
-
-      const drvMarker = L.marker([drvLoc.lat, drvLoc.lng], { icon: drvIcon }).addTo(group);
-      
-      const popupDiv = document.createElement('div');
-      popupDiv.className = 'p-1 font-sans text-xs max-w-sm';
-      popupDiv.innerHTML = `
-        <div class="flex items-center gap-1.5 text-emerald-700 font-bold mb-1 border-b border-slate-100 pb-1 uppercase text-[10px]">
-          <span class="w-3.5 h-3.5 text-emerald-500">📡</span>
-          Telemetria Ativa
-        </div>
-        <strong class="text-slate-900 block font-semibold">${r.driverName}</strong>
-        <p class="text-[10px] text-slate-500 mt-0.5 font-mono">Placa: ${r.driverPlate}</p>
-        <div class="mt-2 bg-slate-50 p-1.5 border border-slate-200/60 rounded-lg grid grid-cols-2 gap-2 text-[9px] font-mono">
-          <div>
-            <span class="text-slate-450 block uppercase font-bold">VELOCIDADE:</span>
-            <strong class="text-slate-700 text-xs">${drvLoc.speed} km/h</strong>
-          </div>
-          <div>
-            <span class="text-slate-450 block uppercase font-bold">DIREÇÃO:</span>
-            <strong class="text-slate-700">${Math.round(drvLoc.heading)}°</strong>
-          </div>
-        </div>
-        <p class="text-[8px] text-slate-400 mt-2 text-right">Ping: ${new Date(drvLoc.lastUpdated).toLocaleTimeString()}</p>
-      `;
-      drvMarker.bindPopup(popupDiv);
-
-      allCoords.push(L.latLng(drvLoc.lat, drvLoc.lng));
-    });
-
-    // 4. Polylines
-    filteredRoutes.forEach((r, idx) => {
-      const colors = ['#2563eb', '#9333ea', '#db2777', '#0d9488', '#ea580c'];
-      const color = colors[idx % colors.length];
-
-      // Draw polyline connecting WH -> Stop 1 -> Stop 2 ...
-      const points: L.LatLngExpression[] = [[r.originLat, r.originLng]];
-      r.stops.forEach(s => {
-        if (s.lat && s.lng && !isNaN(s.lat) && !isNaN(s.lng) && !(s.lat === 0 && s.lng === 0)) {
-          points.push([s.lat, s.lng]);
-        }
-      });
-
-      if (points.length > 1) {
-        L.polyline(points, {
-          color: color,
-          weight: 4,
-          opacity: 0.8
-        }).addTo(group);
-      }
-    });
-
-    // 5. Breadcrumbs
-    filteredRoutes.forEach(r => {
-      const trail = breadcrumbs?.[r.driverId];
-      if (trail && trail.length > 0) {
-        trail.forEach((pt, pidx) => {
-          const opacity = Math.max(0.2, (pidx + 1) / trail.length * 0.75);
-          const scale = Math.max(0.6, (pidx + 1) / trail.length);
-          const size = 8 * scale;
-
-          const breadIcon = L.divIcon({
-            className: 'custom-bread-marker',
-            html: `<div class="bg-indigo-400 rounded-full border border-white/80 shadow-sm" style="width: ${size}px; height: ${size}px; opacity: ${opacity}"></div>`,
-            iconSize: [size, size],
-            iconAnchor: [size / 2, size / 2]
-          });
-
-          L.marker([pt.lat, pt.lng], { icon: breadIcon })
-            .bindPopup(`<strong>Rastro de Rota</strong><br/>Registo de GPS anterior`)
-            .addTo(group);
-        });
-      }
-    });
-
-    // 6. Fit Bounds automatically
-    if (allCoords.length > 0) {
-      try {
-        const boundsL = L.latLngBounds(allCoords);
-        map.fitBounds(boundsL, { padding: [40, 40] });
-      } catch (e) {
-        console.warn("Could not fit bounds: ", e);
-      }
-    }
-
-  }, [useFallbackMap, filteredRoutes, locations, singleRouteMode, singleDriverLocation, breadcrumbs]);
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (mapInstanceRef.current) {
-        mapInstanceRef.current.remove();
-        mapInstanceRef.current = null;
-      }
-    };
-  }, []);
-
-
-
   return (
     <div id="route-google-map-panel" className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[520px]">
       
@@ -480,7 +265,7 @@ export default function RouteMap({
           <div className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse"></div>
           <div>
             <h4 className="text-xs font-bold text-slate-850 flex items-center gap-1.5 uppercase font-mono tracking-tight">
-              Acompanhamento Mapa (OpenStreetMap)
+              Acompanhamento Mapa (Google Maps)
             </h4>
             <p className="text-[10px] text-slate-400">Roteador ativo com polilinhas imutáveis e telemetria regional.</p>
           </div>
@@ -563,7 +348,7 @@ export default function RouteMap({
               }`}
             >
               <Compass className={`w-3.5 h-3.5 ${!useFallbackMap ? 'text-indigo-600' : 'text-white'}`} />
-              <span>{useFallbackMap ? "Exibir OpenStreetMap" : "Exibir Vetor CD"}</span>
+              <span>{useFallbackMap ? "Exibir Google Maps" : "Exibir Vetor CD"}</span>
             </button>
           </div>
         )}
@@ -598,7 +383,7 @@ export default function RouteMap({
           </div>
         )}
         
-        {/* Main Google Maps API Canvas */}
+        {/* Main Maps Canvas Area */}
         <div className="flex-1 h-full min-h-[300px] bg-slate-100 relative">
           {useFallbackMap ? (
             (() => {
@@ -625,7 +410,7 @@ export default function RouteMap({
                       )}
                       <div className="text-[11px] leading-tight">
                         <span className="font-bold">
-                          {mapLoadError ? "Back-up: Roteamento Vetorial de Precisão" : "Roteamento em Vetor Ativado"}
+                          {mapLoadError ? "Back-up: Roteamento Vetorial de Precision" : "Roteamento em Vetor Ativado"}
                         </span>
                         <p className="text-[10px] text-slate-400 mt-0.5">
                           {mapLoadError 
@@ -643,7 +428,7 @@ export default function RouteMap({
                         }}
                         className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-bold text-[9px] uppercase transition-colors cursor-pointer"
                       >
-                        Tentar OpenStreetMap
+                        Tentar Google Maps
                       </button>
                     </div>
                   </div>
@@ -720,7 +505,7 @@ export default function RouteMap({
                     })}
 
                     {/* Draw breadcrumbs */}
-                    {singleRouteMode && breadcrumbs && breadcrumbs[singleRouteMode.driverId] && (
+                    {singleRouteMode && breadcrumbs && Array.isArray(breadcrumbs[singleRouteMode.driverId]) && (
                       breadcrumbs[singleRouteMode.driverId].map((pt, pidx) => {
                         const pointCoords = getSvgCoords(pt.lat, pt.lng);
                         const trail = breadcrumbs[singleRouteMode.driverId];
@@ -742,7 +527,7 @@ export default function RouteMap({
 
                     {!singleRouteMode && breadcrumbs && filteredRoutes.map(r => {
                       const trail = breadcrumbs[r.driverId];
-                      if (!trail) return null;
+                      if (!trail || !Array.isArray(trail)) return null;
                       return trail.map((pt, pidx) => {
                         const pointCoords = getSvgCoords(pt.lat, pt.lng);
                         const opacity = Math.max(0.2, (pidx + 1) / trail.length * 0.75);
@@ -794,7 +579,7 @@ export default function RouteMap({
                             )}
                             
                             {isNextTarget && (
-                              <circle cx={pt.x} cy={pt.y} r={12} fill="none" stroke="#f59e0b" strokeWidth={2} opacity={0.45} className="animate-pulse" />
+                              <circle cx={pt.x} cy={pt.y} r={12} fill="none" stroke="#f59e0b" strokeWidth={2} opacity={0.45} className="animate-pulse" style={{ transformOrigin: `${pt.x}px ${pt.y}px` }} />
                             )}
 
                             <circle 
@@ -1015,7 +800,257 @@ export default function RouteMap({
               );
             })()
           ) : (
-            <div ref={mapContainerRef} className="w-full h-full" style={{ minHeight: '300px', height: '100%', zIndex: 1 }} />
+            <div className="w-full h-full relative" style={{ minHeight: '300px', height: '100%' }}>
+              {!hasValidKey ? (
+                <div className="flex flex-col items-center justify-center p-8 bg-slate-950 text-center text-white h-full border border-slate-900">
+                  <Compass className="w-12 h-12 text-slate-600 mb-3 animate-pulse" />
+                  <h3 className="text-sm font-black uppercase tracking-wider mb-2 font-sans">Chave do Google Maps Requerida</h3>
+                  <p className="text-xs text-slate-400 max-w-sm mb-4 leading-relaxed">
+                    Adicione o segredo <code>GOOGLE_MAPS_PLATFORM_KEY</code> no painel de configurações para habilitar a visualização satélite em tempo real.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setUseFallbackMap(true)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold font-sans uppercase transition-colors tracking-wider shadow-md cursor-pointer active:scale-95"
+                  >
+                    Exibir Backup em Vetor CD
+                  </button>
+                </div>
+              ) : (
+                <APIProvider apiKey={API_KEY} version="weekly">
+                  <Map
+                    defaultCenter={mapCenter}
+                    defaultZoom={singleRouteMode ? 14 : 12}
+                    mapId="DEMO_MAP_ID"
+                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                    style={{ width: '100%', height: '100%' }}
+                    gestureHandling="cooperative"
+                  >
+                    <FitMapBounds 
+                      routes={filteredRoutes} 
+                      locations={locations} 
+                      singleRouteMode={singleRouteMode} 
+                      singleDriverLocation={singleDriverLocation} 
+                    />
+
+                    {/* 1. Warehouse Centers */}
+                    {filteredRoutes.map(r => (
+                      <AdvancedMarker
+                        key={`wh-${r.id}`}
+                        position={{ lat: r.originLat, lng: r.originLng }}
+                        title={`CD Principal (${r.region})`}
+                      >
+                        <div className="w-8 h-8 rounded-full bg-blue-900 border-2 border-white flex items-center justify-center text-white shadow-lg">
+                          <Warehouse className="w-4 h-4" />
+                        </div>
+                      </AdvancedMarker>
+                    ))}
+
+                    {/* 2. Stops / Delivery Pins */}
+                    {filteredRoutes.map(r => 
+                      r.stops.map((stop, sIdx) => {
+                        if (!stop.lat || !stop.lng || isNaN(stop.lat) || isNaN(stop.lng) || (stop.lat === 0 && stop.lng === 0)) return null;
+
+                        const isCompleted = stop.status === 'completed';
+                        const isChegando = stop.status === 'Chegando';
+                        const isNextTarget = r.status === 'active' && sIdx === r.currentStopIndex;
+
+                        const pinColor = isCompleted 
+                          ? '#64748b' 
+                          : isChegando
+                          ? '#10b981'
+                          : isNextTarget 
+                          ? '#f59e0b'
+                          : '#2563eb';
+
+                        return (
+                          <AdvancedMarker
+                            key={`stop-${stop.id}`}
+                            position={{ lat: stop.lat, lng: stop.lng }}
+                            onClick={() => setSelectedStop({ stop, routeName: r.name })}
+                          >
+                            <div className="flex flex-col items-center select-none" style={{ transform: 'translateY(-20px)', width: '28px', height: '40px' }}>
+                              <div 
+                                className="w-7 h-7 rounded-full flex items-center justify-center border-2 border-white text-white font-extrabold text-[11px] shadow-lg"
+                                style={{ backgroundColor: pinColor }}
+                              >
+                                {sIdx + 1}
+                              </div>
+                              <div 
+                                className="w-2 h-2 -mt-1 rotate-45 border-r border-b border-white"
+                                style={{ backgroundColor: pinColor }}
+                              ></div>
+                            </div>
+                          </AdvancedMarker>
+                        );
+                      })
+                    )}
+
+                    {/* 3. Driver Live Markers */}
+                    {filteredRoutes.map(r => {
+                      const drvLoc = singleRouteMode && singleDriverLocation ? singleDriverLocation : locations[r.driverId];
+                      if (!drvLoc) return null;
+
+                      return (
+                        <AdvancedMarker
+                          key={`driver-${r.driverId}`}
+                          position={{ lat: drvLoc.lat, lng: drvLoc.lng }}
+                          onClick={() => setHoveredDriver({
+                            driverName: r.driverName,
+                            location: drvLoc,
+                            plate: r.driverPlate
+                          })}
+                        >
+                          <div className="cursor-pointer bg-indigo-650 border-2 border-white text-white px-2.5 py-1 rounded-xl shadow-lg flex items-center gap-1.5 font-mono text-[10px] font-bold" style={{ width: 'auto', whiteSpace: 'nowrap' }}>
+                            <Truck className="w-4 h-4 shrink-0" />
+                            <span>{r.driverName.split(' ')[0]}</span>
+                          </div>
+                        </AdvancedMarker>
+                      );
+                    })}
+
+                    {/* 4. Polylines representing active routes */}
+                    {filteredRoutes.map((r, idx) => {
+                      const colors = ['#2563eb', '#9333ea', '#db2777', '#0d9488', '#ea580c'];
+                      const color = colors[idx % colors.length];
+
+                      const pathPoints: google.maps.LatLngLiteral[] = [{ lat: r.originLat, lng: r.originLng }];
+                      r.stops.forEach(s => {
+                        if (s.lat && s.lng && !isNaN(s.lat) && !isNaN(s.lng) && !(s.lat === 0 && s.lng === 0)) {
+                          pathPoints.push({ lat: s.lat, lng: s.lng });
+                        }
+                      });
+
+                      if (pathPoints.length < 2) return null;
+
+                      return (
+                        <MapPolyline 
+                          key={`poly-${r.id}`} 
+                          path={pathPoints} 
+                          color={color} 
+                        />
+                      );
+                    })}
+
+                    {/* 5. Breadcrumbs representing recent trajectory history */}
+                    {breadcrumbs && filteredRoutes.map(r => {
+                      const trail = breadcrumbs[r.driverId];
+                      if (!trail || !Array.isArray(trail)) return null;
+
+                      return trail.map((pt, pidx) => {
+                        const opacity = Math.max(0.2, (pidx + 1) / trail.length * 0.75);
+                        const scale = Math.max(0.6, (pidx + 1) / trail.length);
+                        const color = singleRouteMode ? '#10b981' : '#6366f1';
+
+                        return (
+                          <AdvancedMarker
+                            key={`bread-${r.driverId}-${pidx}`}
+                            position={{ lat: pt.lat, lng: pt.lng }}
+                          >
+                            <div 
+                              style={{ 
+                                width: `${8 * scale}px`, 
+                                height: `${8 * scale}px`, 
+                                backgroundColor: color, 
+                                borderRadius: '50%', 
+                                opacity: opacity 
+                              }} 
+                            />
+                          </AdvancedMarker>
+                        );
+                      });
+                    })}
+
+                    {/* 6. Information Popups (Selected Stop & Hovered Driver) */}
+                    {selectedStop && (
+                      <InfoWindow 
+                        position={{ lat: selectedStop.stop.lat, lng: selectedStop.stop.lng }}
+                        onCloseClick={() => setSelectedStop(null)}
+                      >
+                        <div className="p-1 font-sans text-xs max-w-sm text-slate-800 leading-normal">
+                          <div className="flex items-center gap-1 text-slate-850 font-bold mb-1 border-b border-slate-100 pb-1 uppercase text-[10px]">
+                            <MapPin className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                            Ponto de Entrega #{selectedStop.stop.id}
+                          </div>
+                          <strong className="text-slate-900 font-bold block">{selectedStop.stop.clientName}</strong>
+                          <p className="text-[10px] text-slate-500 mt-1">{selectedStop.stop.address}</p>
+                          <div className="mt-2.5 flex items-center justify-between gap-1 text-[9px] font-semibold">
+                            <span className={`px-1.5 py-0.5 rounded ${selectedStop.stop.status === 'completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-100 font-bold' : 'bg-amber-50 text-amber-700 border border-amber-100 font-bold'}`}>
+                              {selectedStop.stop.status === 'completed' ? 'Entregue ✔' : 'Pendente ⏳'}
+                            </span>
+                            <span className="text-slate-400 font-normal font-mono">Sessão: {selectedStop.routeName}</span>
+                          </div>
+                          
+                          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedStop.stop.lat},${selectedStop.stop.lng}`, '_blank');
+                              }}
+                              className="py-1.5 px-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              Google Maps
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                window.open(`waze://?ll=${selectedStop.stop.lat},${selectedStop.stop.lng}&navigate=yes`, '_self');
+                                setTimeout(() => {
+                                  window.open(`https://waze.com/ul?ll=${selectedStop.stop.lat},${selectedStop.stop.lng}&navigate=yes`, '_blank');
+                                }, 300);
+                              }}
+                              className="py-1.5 px-2 bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-800 font-bold rounded-lg text-[9px] uppercase tracking-wider text-center cursor-pointer flex items-center justify-center gap-1"
+                            >
+                              Waze
+                            </button>
+                          </div>
+
+                          {currentUserRole === 2 && selectedStop.stop.status !== 'completed' && onStopClick && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onStopClick(selectedStop.stop);
+                                setSelectedStop(null);
+                              }}
+                              className="mt-3 w-full py-2 bg-gradient-to-r from-indigo-600 to-indigo-700 text-white font-extrabold rounded-lg text-[10px] uppercase shadow-sm text-center cursor-pointer tracking-wider"
+                            >
+                              Confirmar Entrega
+                            </button>
+                          )}
+                        </div>
+                      </InfoWindow>
+                    )}
+
+                    {hoveredDriver && (
+                      <InfoWindow
+                        position={{ lat: hoveredDriver.location.lat, lng: hoveredDriver.location.lng }}
+                        onCloseClick={() => setHoveredDriver(null)}
+                      >
+                        <div className="p-1 font-sans text-xs max-w-sm text-slate-800 leading-normal">
+                          <div className="flex items-center gap-1.5 text-emerald-700 font-bold mb-1 border-b border-slate-100 pb-1 uppercase text-[10px]">
+                            <Signal className="w-3.5 h-3.5 text-emerald-500 animate-pulse" />
+                            Telemetria Ativa
+                          </div>
+                          <strong className="text-slate-900 block font-bold">{hoveredDriver.driverName}</strong>
+                          <p className="text-[10px] text-slate-500 mt-0.5 font-mono">Placa: {hoveredDriver.plate}</p>
+                          <div className="mt-2 bg-slate-50 p-1.5 border border-slate-200/60 rounded-lg grid grid-cols-2 gap-2 text-[9px] font-mono">
+                            <div>
+                              <span className="text-slate-450 block uppercase font-bold">VELOCIDADE:</span>
+                              <strong className="text-slate-700 text-xs">{hoveredDriver.location.speed} km/h</strong>
+                            </div>
+                            <div>
+                              <span className="text-slate-450 block uppercase font-bold">DIREÇÃO:</span>
+                              <strong className="text-slate-700">{Math.round(hoveredDriver.location.heading)}°</strong>
+                            </div>
+                          </div>
+                          <p className="text-[8px] text-slate-400 mt-2 text-right font-mono">Ping: {new Date(hoveredDriver.location.lastUpdated).toLocaleTimeString()}</p>
+                        </div>
+                      </InfoWindow>
+                    )}
+                  </Map>
+                </APIProvider>
+              )}
+            </div>
           )}
         </div>
 
@@ -1032,7 +1067,7 @@ export default function RouteMap({
             </div>
             <div className="h-0.5 bg-slate-800 my-1.5"></div>
             <p className="text-[10px] text-slate-400 leading-normal">
-              Conexões de GPS integradas ao barramento regional.
+              Conexões de GPS integradas ao barramento regional de visualização.
             </p>
           </div>
         </div>

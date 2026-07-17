@@ -45,6 +45,18 @@ export default function ClienteManager({
   const [addressPredictions, setAddressPredictions] = useState<{ description: string; placeId: string }[]>([]);
   const [isValidating, setIsValidating] = useState(false);
 
+  // Structured CEP & Address states for ViaCEP
+  const [formCep, setFormCep] = useState('');
+  const [formStreet, setFormStreet] = useState('');
+  const [formNeighborhood, setFormNeighborhood] = useState('');
+  const [formCity, setFormCity] = useState('');
+  const [formState, setFormState] = useState('');
+  const [formNumber, setFormNumber] = useState('');
+  const [formComplement, setFormComplement] = useState('');
+  const [isCepValidated, setIsCepValidated] = useState(false);
+  const [isCepLoading, setIsCepLoading] = useState(false);
+  const [isNominatimLoading, setIsNominatimLoading] = useState(false);
+
   // Deletion confirm queue
   const [clientToDelete, setClientToDelete] = useState<Cliente | null>(null);
 
@@ -110,6 +122,168 @@ export default function ClienteManager({
     }
   };
 
+  // Synchronize formAddress as a single string whenever the structured components change
+  React.useEffect(() => {
+    if (!formCep && !formStreet) return;
+    const street = formStreet || '';
+    const numberPart = formNumber ? `, ${formNumber}` : '';
+    const compPart = formComplement ? ` - ${formComplement}` : '';
+    const neighPart = formNeighborhood ? ` - ${formNeighborhood}` : '';
+    const cityPart = formCity ? `, ${formCity}` : '';
+    const statePart = formState ? ` - ${formState}` : '';
+    const cepPart = formCep ? `, CEP ${formCep}` : '';
+    
+    const assembled = `${street}${numberPart}${compPart}${neighPart}${cityPart}${statePart}${cepPart}`.trim();
+    setFormAddress(assembled);
+  }, [formStreet, formNumber, formComplement, formNeighborhood, formCity, formState, formCep]);
+
+  const triggerBackgroundGeocoding = async (street: string, neighborhood: string, city: string, state: string, cep: string, numberVal: string) => {
+    const formattedAddress = `${street || 'Rua'}, ${numberVal || '100'} - ${neighborhood || 'Bairro'}, ${city || 'Cidade'} - ${state || 'Estado'}, CEP ${cep}`;
+    setIsValidating(true);
+    try {
+      const response = await fetch('/api/gis/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: formattedAddress })
+      });
+      setIsValidating(false);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.valid) {
+          setFormLat(data.lat);
+          setFormLng(data.lng);
+        }
+      }
+    } catch (err) {
+      setIsValidating(false);
+      console.warn('GIS Validator background geocoding failed:', err);
+    }
+  };
+
+  const handleNumberBlur = async () => {
+    if (!formStreet || !formCity) return;
+    if (!formNumber || formNumber.trim() === '' || formNumber.toUpperCase() === 'S/N') {
+      // If no number is typed, geocode the street directly
+      await triggerStreetOnlyGeocoding();
+      return;
+    }
+
+    setIsNominatimLoading(true);
+    showToast('Buscando coordenadas exatas no OpenStreetMap (Nominatim)...', 'info', 'Geocodificação');
+
+    // Query 1: Full precise address query
+    const query = `${formStreet}, ${formNumber}, ${formCity} - ${formState || ''}, Brasil`;
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+      const res = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'LogisticaCorporativaRealtimeApp/1.0'
+        }
+      });
+
+      if (!res.ok) throw new Error('Nominatim HTTP Error');
+      const data = await res.json();
+
+      if (data && data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          setFormLat(lat);
+          setFormLng(lng);
+          showToast(`Endereço georreferenciado: Número ${formNumber} localizado!`, 'success', 'OpenStreetMap');
+          setIsNominatimLoading(false);
+          return;
+        }
+      }
+
+      // Query 2 (Plan B): Fallback to street level when the specific number is not found
+      console.warn(`[Nominatim] Specific number ${formNumber} not found. Attempting Plan B street-level search.`);
+      showToast(`Número ${formNumber} não localizado. Buscando coordenada geral da rua (Plano B)...`, 'warning', 'OpenStreetMap');
+      await triggerStreetOnlyGeocoding();
+
+    } catch (error) {
+      console.error('[Nominatim lookup error]', error);
+      showToast('Erro ao consultar o OpenStreetMap. Tentando obter coordenadas aproximadas da rua...', 'warning', 'Geocodificação');
+      await triggerStreetOnlyGeocoding();
+    } finally {
+      setIsNominatimLoading(false);
+    }
+  };
+
+  const triggerStreetOnlyGeocoding = async () => {
+    const query = `${formStreet}, ${formCity} - ${formState || ''}, Brasil`;
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+      const res = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'LogisticaCorporativaRealtimeApp/1.0'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.length > 0) {
+          const lat = parseFloat(data[0].lat);
+          const lng = parseFloat(data[0].lon);
+          if (!isNaN(lat) && !isNaN(lng)) {
+            setFormLat(lat);
+            setFormLng(lng);
+            showToast('Coordenadas da rua obtidas com sucesso!', 'success', 'OpenStreetMap');
+            return;
+          }
+        }
+      }
+      showToast('Não foi possível obter as coordenadas automaticamente. Insira-as manualmente se necessário.', 'warning', 'Geocodificação');
+    } catch (err) {
+      console.error('[Nominatim fallback street error]', err);
+    }
+  };
+
+  const handleCepLookup = async (cepValue: string) => {
+    const cleanCep = cepValue.replace(/\D/g, '');
+    if (cleanCep.length !== 8) {
+      showToast('O CEP deve conter exatamente 8 números.', 'warning', 'Validação de CEP');
+      return;
+    }
+
+    setIsCepLoading(true);
+    setIsCepValidated(false);
+
+    try {
+      const res = await fetch(`https://viacep.com.br/ws/${cleanCep}/json/`);
+      if (!res.ok) throw new Error('Falha na requisição ao ViaCEP');
+      const data = await res.json();
+
+      if (data.erro) {
+        showToast('CEP não encontrado na base de dados do ViaCEP.', 'error', 'Busca de CEP');
+        // Clear fields
+        setFormStreet('');
+        setFormNeighborhood('');
+        setFormCity('');
+        setFormState('');
+        setIsCepLoading(false);
+        return;
+      }
+
+      setFormStreet(data.logradouro || '');
+      setFormNeighborhood(data.bairro || '');
+      setFormCity(data.localidade || '');
+      setFormState(data.uf || '');
+      setIsCepValidated(true);
+      setIsCepLoading(false);
+      showToast('Endereço localizado com sucesso!', 'success', 'ViaCEP');
+
+      // Trigger background geocoding with default number to instantly map client
+      triggerBackgroundGeocoding(data.logradouro, data.bairro, data.localidade, data.uf, cleanCep, formNumber || '100');
+
+    } catch (err: any) {
+      console.error('ViaCEP lookup error:', err);
+      showToast('Erro ao buscar o CEP. Por favor, verifique sua conexão ou tente novamente.', 'error', 'Busca de CEP');
+      setIsCepLoading(false);
+    }
+  };
+
   const handleOpenAddClient = () => {
     setEditingClient(null);
     setFormName('');
@@ -119,6 +293,18 @@ export default function ClienteManager({
     setFormLng(gOriginLng);
     setFormStatus('active');
     setAddressPredictions([]);
+
+    // Reset CEP lookup states
+    setFormCep('');
+    setFormStreet('');
+    setFormNeighborhood('');
+    setFormCity('');
+    setFormState('');
+    setFormNumber('');
+    setFormComplement('');
+    setIsCepValidated(false);
+    setIsCepLoading(false);
+
     setIsFormOpen(true);
   };
 
@@ -131,6 +317,69 @@ export default function ClienteManager({
     setFormLng(cli.lng);
     setFormStatus(cli.status || 'active');
     setAddressPredictions([]);
+
+    // Parse existing address to populate structured fields when editing
+    let parsedCep = '';
+    let parsedStreet = '';
+    let parsedNumber = '';
+    let parsedNeighborhood = '';
+    let parsedCity = '';
+    let parsedState = '';
+    let parsedComplement = '';
+
+    const cepMatch = cli.address.match(/CEP\s*(\d{5}-?\d{3})/i) || cli.address.match(/CEP\s*(\d{8})/i);
+    if (cepMatch) {
+      parsedCep = cepMatch[1].replace(/\D/g, '');
+    }
+
+    try {
+      const parts = cli.address.split(',');
+      if (parts.length >= 1) {
+        const streetAndNum = parts[0].trim();
+        const numMatch = streetAndNum.match(/(.*)\s*,\s*(\d+)/) || streetAndNum.match(/(.*?)\s+(\d+)\s*$/);
+        if (numMatch) {
+          parsedStreet = numMatch[1].trim();
+          parsedNumber = numMatch[2].trim();
+        } else {
+          parsedStreet = streetAndNum;
+        }
+      }
+      
+      if (parts.length >= 2) {
+        const secondPart = parts[1].trim();
+        if (secondPart.includes('-')) {
+          const subParts = secondPart.split('-');
+          if (!parsedNumber && subParts[0].trim() && !isNaN(Number(subParts[0].trim()))) {
+            parsedNumber = subParts[0].trim();
+          }
+          parsedNeighborhood = subParts[subParts.length - 1].trim();
+        } else {
+          parsedNeighborhood = secondPart;
+        }
+      }
+      
+      if (parts.length >= 3) {
+        parsedCity = parts[2].trim();
+      }
+      
+      if (parts.length >= 4) {
+        const statePart = parts[3].trim().split(' ')[0];
+        parsedState = statePart.replace(/[^a-zA-Z]/g, '');
+      }
+    } catch (e) {
+      parsedStreet = cli.address;
+    }
+
+    setFormCep(parsedCep);
+    setFormStreet(parsedStreet || cli.address);
+    setFormNeighborhood(parsedNeighborhood);
+    setFormCity(parsedCity);
+    setFormState(parsedState);
+    setFormNumber(parsedNumber || 'S/N');
+    setFormComplement(parsedComplement);
+    setIsCepValidated(true); // Since it has a valid existing address
+    setIsCepLoading(false);
+
     setIsFormOpen(true);
   };
 
@@ -625,38 +874,166 @@ export default function ClienteManager({
                 </div>
               </div>
 
-              <div className="relative">
-                <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">Endereço de Entrega</label>
-                <input
-                  id="cm-form-address"
-                  type="text"
-                  required
-                  placeholder="Digite rua, número, bairro e cidade..."
-                  value={formAddress}
-                  onChange={e => {
-                    setFormAddress(e.target.value);
-                    fetchAddressPredictions(e.target.value);
-                  }}
-                  className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-550 rounded-xl p-2.5 text-xs font-semibold shadow-xs"
-                />
+              {/* CEP Autocomplete & Structured Fields */}
+              <div className="space-y-3 p-3 bg-slate-50 border border-slate-200/80 rounded-2xl">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2 mb-1">
+                  <span className="font-bold text-[10px] text-slate-700 uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                    📬 Endereço & Autopreenchimento CEP
+                  </span>
+                  {isCepValidated && (
+                    <span className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                      ✓ CEP Carregado
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">
+                      CEP (Apenas Números)
+                    </label>
+                    <div className="relative">
+                      <input
+                        id="cm-form-cep"
+                        type="text"
+                        placeholder="Ex: 35020120"
+                        maxLength={9}
+                        value={formCep}
+                        onChange={e => {
+                          const val = e.target.value.replace(/\D/g, '');
+                          setFormCep(val);
+                          if (val.length === 8) {
+                            handleCepLookup(val);
+                          }
+                        }}
+                        onBlur={() => {
+                          if (formCep && formCep.length > 0 && formCep.length !== 8) {
+                            showToast('CEP inválido. Deve conter exatamente 8 dígitos.', 'warning', 'Validação de CEP');
+                          } else if (formCep && formCep.length === 8 && !isCepValidated) {
+                            handleCepLookup(formCep);
+                          }
+                        }}
+                        className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-550 rounded-xl p-2.5 text-xs font-semibold shadow-xs"
+                      />
+                      {isCepLoading && (
+                        <div className="absolute right-3 top-2.5 flex items-center">
+                          <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      disabled={isCepLoading || formCep.length !== 8}
+                      onClick={() => handleCepLookup(formCep)}
+                      className="w-full py-2.5 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 disabled:bg-slate-100 text-indigo-650 disabled:text-slate-400 border border-indigo-200/50 rounded-xl text-[10px] font-bold transition-all uppercase tracking-wider cursor-pointer"
+                    >
+                      Buscar
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">
+                    Rua / Avenida (Logradouro)
+                  </label>
+                  <input
+                    id="cm-form-street"
+                    type="text"
+                    required
+                    readOnly={!isCepValidated}
+                    placeholder={!isCepValidated ? "Digite o CEP para liberar este campo" : "Ex: Rua Sete de Setembro"}
+                    value={formStreet}
+                    onChange={e => setFormStreet(e.target.value)}
+                    className={`w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-550 rounded-xl p-2.5 text-xs font-semibold shadow-xs ${
+                      !isCepValidated ? 'bg-slate-100/80 text-slate-400 cursor-not-allowed' : 'bg-white text-slate-800'
+                    }`}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">
+                      Bairro
+                    </label>
+                    <input
+                      id="cm-form-neighborhood"
+                      type="text"
+                      required
+                      readOnly={!isCepValidated}
+                      placeholder={!isCepValidated ? "Aguardando CEP" : "Ex: Centro"}
+                      value={formNeighborhood}
+                      onChange={e => setFormNeighborhood(e.target.value)}
+                      className={`w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-550 rounded-xl p-2.5 text-xs font-semibold shadow-xs ${
+                        !isCepValidated ? 'bg-slate-100/80 text-slate-400 cursor-not-allowed' : 'bg-white text-slate-800'
+                      }`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">
+                      Cidade / UF
+                    </label>
+                    <input
+                      id="cm-form-city-state"
+                      type="text"
+                      required
+                      readOnly
+                      placeholder={!isCepValidated ? "Aguardando CEP" : "Ex: Governador Valadares/MG"}
+                      value={formCity && formState ? `${formCity} / ${formState}` : ''}
+                      className="w-full border border-slate-200 focus:outline-none rounded-xl p-2.5 text-xs font-semibold shadow-xs bg-slate-100/80 text-slate-400 cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">
+                      Número
+                    </label>
+                    <input
+                      id="cm-form-number"
+                      type="text"
+                      required
+                      placeholder="Ex: 320"
+                      value={formNumber}
+                      onChange={e => {
+                        setFormNumber(e.target.value);
+                        if (isCepValidated) {
+                          triggerBackgroundGeocoding(formStreet, formNeighborhood, formCity, formState, formCep, e.target.value);
+                        }
+                      }}
+                      onBlur={handleNumberBlur}
+                      className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-550 rounded-xl p-2.5 text-xs font-semibold shadow-xs bg-white text-slate-800"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-500 font-bold uppercase text-[9px] tracking-wider mb-1">
+                      Complemento (Opcional)
+                    </label>
+                    <input
+                      id="cm-form-complement"
+                      type="text"
+                      placeholder="Ex: Apt 401, Bloco B"
+                      value={formComplement}
+                      onChange={e => setFormComplement(e.target.value)}
+                      className="w-full border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-550 rounded-xl p-2.5 text-xs font-semibold shadow-xs bg-white text-slate-800"
+                    />
+                  </div>
+                </div>
+
                 {isValidating && (
-                  <span className="text-[10px] text-amber-600 animate-pulse block mt-1 font-semibold">
-                    Validando CEP e obtendo geolocalização de alta precisão (GIS)...
+                  <span className="text-[10px] text-amber-600 animate-pulse block font-semibold text-center mt-1">
+                    Validando endereço e calculando rota georreferenciada exata (GIS)...
                   </span>
                 )}
-                {addressPredictions.length > 0 && (
-                  <div className="absolute z-50 w-full bg-white border border-slate-250 rounded-xl shadow-xl mt-1 max-h-36 overflow-y-auto leading-tight">
-                    {addressPredictions.map((pred, pIdx) => (
-                      <button
-                        key={pIdx}
-                        type="button"
-                        onClick={() => handleSelectPrediction(pred.description, pred.placeId)}
-                        className="w-full text-left p-2.5 hover:bg-slate-55 hover:bg-slate-50 border-b border-slate-100 text-[11px] font-semibold truncate text-slate-700"
-                      >
-                        📍 {pred.description}
-                      </button>
-                    ))}
-                  </div>
+                {isNominatimLoading && (
+                  <span className="text-[10px] text-indigo-600 animate-pulse block font-semibold text-center mt-1">
+                    Buscando coordenadas exatas no OpenStreetMap (Nominatim)...
+                  </span>
                 )}
               </div>
 

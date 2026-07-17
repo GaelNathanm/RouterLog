@@ -50,8 +50,22 @@ export function useRouteLogState() {
   const [rotas, setRotas] = useState<Rota[]>(INITIAL_ROTAS);
   const [locations, setLocations] = useState<{ [driverId: string]: GPSLocation }>(INITIAL_LOCATIONS);
   const [breadcrumbs, setBreadcrumbs] = useState<{ [driverId: string]: { lat: number; lng: number }[] }>(() => {
-    const saved = localStorage.getItem('routelog_breadcrumbs');
-    return saved ? JSON.parse(saved) : {};
+    try {
+      const saved = localStorage.getItem('routelog_breadcrumbs');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const validated: { [driverId: string]: { lat: number; lng: number }[] } = {};
+        for (const key in parsed) {
+          if (Array.isArray(parsed[key])) {
+            validated[key] = parsed[key];
+          }
+        }
+        return validated;
+      }
+    } catch (e) {
+      console.warn('Error parsing breadcrumbs cache:', e);
+    }
+    return {};
   });
   const [chats, setChats] = useState<ChatMessage[]>(INITIAL_CHAT);
   const [notifications, setNotifications] = useState<NotificationLog[]>(INITIAL_NOTIFICATIONS);
@@ -416,7 +430,7 @@ export function useRouteLogState() {
       const map: { [driverId: string]: { lat: number; lng: number }[] } = {};
       list.forEach(b => {
         if (b && b.driverId) {
-          map[b.driverId] = b.trail || [];
+          map[b.driverId] = Array.isArray(b.trail) ? b.trail : [];
         }
       });
       setBreadcrumbs(map);

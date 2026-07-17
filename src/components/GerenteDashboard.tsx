@@ -89,7 +89,7 @@ export function GerenteDashboard({
 }: GerenteProps) {
   const [chatInput, setChatInput] = useState('');
   const [activeTab, setActiveTab] = useState<'map' | 'routes' | 'chat' | 'push_config' | 'analytics' | 'clientes'>('map');
-  const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
+  const [mapMode, setMapMode] = useState<'vector' | 'google'>('google');
   const [searchTerm, setSearchTerm] = useState('');
   const [isImporterOpen, setIsImporterOpen] = useState(false);
 
@@ -2280,7 +2280,7 @@ export function GerenteDashboard({
                 </div>
               </div>
               ) : (
-                <MapClientes region={region} />
+                <MapClientes region={region} clients={clients} />
               )}
 
               {/* FULL-SCREEN SECURE CLIENT IMPORTER MODAL */}

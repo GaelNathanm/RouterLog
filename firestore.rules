@@ -159,15 +159,19 @@ service cloud.firestore {
       allow get: if isSignedIn() && isValidId(notificationId);
       allow list: if isSignedIn();
       
-      // Only Admins or Logistics Managers can dispatch announcements/alerts
-      allow create, update, delete: if isSignedIn() && isValidId(notificationId) && (isAdmin() || isGerente());
+      // Any signed in user can create notifications (e.g. geofence arrivals), but updates/deletes are for managers/admins
+      allow create: if isSignedIn() && isValidId(notificationId);
+      allow update, delete: if isSignedIn() && isValidId(notificationId) && (isAdmin() || isGerente());
     }
 
     // Push Dispatch Reports Collection
     match /push_logs/{pushLogId} {
       allow get: if isSignedIn() && isValidId(pushLogId);
       allow list: if isSignedIn();
-      allow create, update, delete: if isSignedIn() && isValidId(pushLogId) && (isAdmin() || isGerente());
+      
+      // Any signed in user can log push reports (e.g. system push deliveries), but updates/deletes are for managers/admins
+      allow create: if isSignedIn() && isValidId(pushLogId);
+      allow update, delete: if isSignedIn() && isValidId(pushLogId) && (isAdmin() || isGerente());
     }
 
     // Administrative Audit Log Collection

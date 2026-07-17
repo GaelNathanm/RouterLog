@@ -137,7 +137,7 @@ export default function RegionalMap({ rotas, locations, region, breadcrumbs }: R
           {/* Render Breadcrumbs (Trilha de Pão / Recent Geographic History) */}
           {breadcrumbs && regionalRoutes.map((route, rIdx) => {
             const trail = breadcrumbs[route.driverId];
-            if (!trail || trail.length === 0) return null;
+            if (!trail || !Array.isArray(trail) || trail.length === 0) return null;
             
             const dotColor = rIdx % 2 === 0 ? '#60a5fa' : '#c084fc';
             

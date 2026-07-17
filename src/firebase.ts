@@ -385,7 +385,7 @@ export async function getCloudUserByEmail(email: string): Promise<RouteUser | nu
 }
 
 export async function saveCloudRoute(rota: Rota) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('rotas', rota);
     return;
   }
@@ -402,7 +402,7 @@ export async function saveCloudRoute(rota: Rota) {
 }
 
 export async function deleteCloudRoute(routeId: string) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     deleteLocalItem('rotas', routeId);
     return;
   }
@@ -419,7 +419,7 @@ export async function deleteCloudRoute(routeId: string) {
 }
 
 export async function saveCloudGPSLocation(location: GPSLocation) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('locations', location, 'driverId');
     return;
   }
@@ -446,7 +446,7 @@ export async function saveCloudGPSLocation(location: GPSLocation) {
 }
 
 export async function saveCloudChat(chat: ChatMessage) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('chats', chat);
     return;
   }
@@ -463,7 +463,7 @@ export async function saveCloudChat(chat: ChatMessage) {
 }
 
 export async function saveCloudNotification(notif: NotificationLog) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('notifications', notif);
     return;
   }
@@ -480,7 +480,7 @@ export async function saveCloudNotification(notif: NotificationLog) {
 }
 
 export async function saveCloudAuditLog(audit: AuditLogEntry) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('audit_logs', audit);
     return;
   }
@@ -497,7 +497,7 @@ export async function saveCloudAuditLog(audit: AuditLogEntry) {
 }
 
 export async function saveCloudPerformanceLog(perf: RoutePerformanceLog) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('performance_logs', perf);
     return;
   }
@@ -514,7 +514,7 @@ export async function saveCloudPerformanceLog(perf: RoutePerformanceLog) {
 }
 
 export async function saveCloudPushLog(push: PushDeliveryLog) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('push_logs', push);
     return;
   }
@@ -531,7 +531,7 @@ export async function saveCloudPushLog(push: PushDeliveryLog) {
 }
 
 export async function saveCloudRegion(region: Region) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('regions', region);
     return;
   }
@@ -548,7 +548,7 @@ export async function saveCloudRegion(region: Region) {
 }
 
 export async function deleteCloudRegion(regionId: string) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     deleteLocalItem('regions', regionId);
     return;
   }
@@ -565,7 +565,7 @@ export async function deleteCloudRegion(regionId: string) {
 }
 
 export async function saveCloudClient(client: Cliente) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     saveLocalItem('clients', client);
     return;
   }
@@ -582,7 +582,7 @@ export async function saveCloudClient(client: Cliente) {
 }
 
 export async function deleteCloudClient(clientId: string) {
-  if (isQuotaExceeded) {
+  if (isQuotaExceeded || !auth?.currentUser) {
     deleteLocalItem('clients', clientId);
     return;
   }

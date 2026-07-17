@@ -153,6 +153,92 @@ export default function App() {
     return () => window.removeEventListener('fcm_notification_received', handleFcm);
   }, [activeSessionUser]);
 
+  // Real-time network-synced push notification trigger for chats
+  const lastProcessedChatId = React.useRef<string | null>(null);
+  const isInitialChatLoad = React.useRef(true);
+
+  useEffect(() => {
+    if (!activeSessionUser || chats.length === 0) {
+      if (chats.length > 0) {
+        isInitialChatLoad.current = false;
+      }
+      return;
+    }
+
+    if (isInitialChatLoad.current) {
+      isInitialChatLoad.current = false;
+      if (chats.length > 0) {
+        lastProcessedChatId.current = chats[chats.length - 1].id;
+      }
+      return;
+    }
+
+    const latestChat = chats[chats.length - 1];
+    if (latestChat && latestChat.id !== lastProcessedChatId.current) {
+      lastProcessedChatId.current = latestChat.id;
+
+      // Only dispatch if it's from another user
+      if (latestChat.senderId !== activeSessionUser.id) {
+        const matchesRegion = latestChat.region === 'all' || (activeSessionUser as any).region === latestChat.region || Number(activeSessionUser.role) === UserRole.ADMIN;
+        if (matchesRegion) {
+          window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+            detail: {
+              title: `Mensagem de ${latestChat.senderName} 💬`,
+              body: latestChat.message,
+              type: 'urgente_chat',
+              region: latestChat.region,
+              role: 'all'
+            }
+          }));
+        }
+      }
+    }
+  }, [chats, activeSessionUser]);
+
+  // Real-time network-synced push notification trigger for system notifications
+  const lastProcessedNotifId = React.useRef<string | null>(null);
+  const isInitialNotifLoad = React.useRef(true);
+
+  useEffect(() => {
+    if (!activeSessionUser || notifications.length === 0) {
+      if (notifications.length > 0) {
+        isInitialNotifLoad.current = false;
+      }
+      return;
+    }
+
+    if (isInitialNotifLoad.current) {
+      isInitialNotifLoad.current = false;
+      if (notifications.length > 0) {
+        lastProcessedNotifId.current = notifications[0].id;
+      }
+      return;
+    }
+
+    const latestNotif = notifications[0];
+    if (latestNotif && latestNotif.id !== lastProcessedNotifId.current) {
+      lastProcessedNotifId.current = latestNotif.id;
+
+      // Only notify if we are not the sender
+      if (latestNotif.senderName !== activeSessionUser.name) {
+        const isUserAdmin = Number(activeSessionUser.role) === UserRole.ADMIN || String(activeSessionUser.role) === '0' || String(activeSessionUser.role).toLowerCase() === 'admin';
+        const matchesRegion = latestNotif.region === 'all' || (activeSessionUser as any).region === latestNotif.region || isUserAdmin;
+        
+        if (matchesRegion) {
+          window.dispatchEvent(new CustomEvent('fcm_notification_received', {
+            detail: {
+              title: latestNotif.title,
+              body: latestNotif.body,
+              type: 'status_parada',
+              region: latestNotif.region,
+              role: 'all'
+            }
+          }));
+        }
+      }
+    }
+  }, [notifications, activeSessionUser]);
+
   const matchesAdminRole = activeSessionUser && (Number(activeSessionUser.role) === UserRole.ADMIN || String(activeSessionUser.role) === '0' || String(activeSessionUser.role).toLowerCase() === 'admin');
   const matchesGerenteRole = activeSessionUser && (Number(activeSessionUser.role) === UserRole.GERENTE || String(activeSessionUser.role) === '1' || String(activeSessionUser.role).toLowerCase() === 'gerente');
 
