@@ -6,14 +6,14 @@
 import React, { useState } from 'react';
 import { 
   UserRole, RouteUser, Rota, GPSLocation, ChatMessage
-} from '../types';
+} from '../../types';
 import { 
   UserCheck, SlidersHorizontal, Map, Route, Truck, MessageSquare, Phone, Send, Info
 } from 'lucide-react';
-import InteractiveMap from './InteractiveMap';
-import RouteMap from './RouteMap';
+import InteractiveMap from '../../components/InteractiveMap';
+import RouteMap from '../../components/RouteMap';
 import { motion } from 'motion/react';
-import { AudioPlayer, AudioRecorderButton } from './DashboardUtils';
+import { AudioPlayer, AudioRecorderButton } from '../../components/DashboardUtils';
 
 interface VendedorProps {
   user: RouteUser;

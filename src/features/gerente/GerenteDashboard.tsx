@@ -7,7 +7,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, 
   RoutePerformanceLog, PushDeliveryLog, PushConfig, Region, Cliente, MotoristaUser 
-} from '../types';
+} from '../../types';
 import { 
   Users, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
   Trash2, AlertCircle, Share2, Navigation, CheckCircle, Send, MessageSquare, 
@@ -15,19 +15,19 @@ import {
   Route, Compass, Bell, Settings, Layers, Calendar, BarChart3, Clock, AlertOctagon, HelpCircle, Truck, Signal,
   Download, Printer, Mic, Square, Pause, Volume2, SlidersHorizontal, Camera, RefreshCw, X, FileSpreadsheet, Search
 } from 'lucide-react';
-import InteractiveMap from './InteractiveMap';
-import RegionalMap from './RegionalMap';
-import RouteMap from './RouteMap';
-import ClientImporter from './ClientImporter';
-import ClienteManager from './ClienteManager';
-import MapClientes from './MapClientes';
-import WelcomeTutorial from './WelcomeTutorial';
+import InteractiveMap from '../../components/InteractiveMap';
+import RegionalMap from '../../components/RegionalMap';
+import RouteMap from '../../components/RouteMap';
+import ClientImporter from '../../components/ClientImporter';
+import ClienteManager from '../../components/ClienteManager';
+import MapClientes from '../../components/MapClientes';
+import WelcomeTutorial from '../../components/WelcomeTutorial';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   AudioPlayer, AudioRecorderButton, DriverStatusCard, exportToCSV, exportToPDF 
-} from './DashboardUtils';
-import { GUARIBA_LOCATIONS } from './MotoristaDashboard';
+} from '../../components/DashboardUtils';
+import { GUARIBA_LOCATIONS } from '../motorista/MotoristaDashboard';
 
 // ==========================================
 // 2. GERENTE DE LOGÍSTICA VIEW
@@ -1884,7 +1884,7 @@ export function GerenteDashboard({
                                 <div className="min-w-0 pr-1 flex-1">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <strong className="text-slate-850 font-bold truncate block text-xs">{st.clientName}</strong>
-                                    {st.phone && (
+                                    {st.clientWhatsApp && (
                                       <span className="text-[9px] font-mono text-indigo-705 bg-indigo-50 border border-indigo-100/50 px-1 rounded font-bold uppercase scale-90">
                                         WhatsApp
                                       </span>
@@ -2329,7 +2329,7 @@ export function GerenteDashboard({
                           });
 
                           // Determine if we should also load them into the current active planning queue (gStops)
-                          const isPlanningPath = activeTab === 'routes' || (activeTab === 'clientes' && clientSubTab === 'planner');
+                          const isPlanningPath = (activeTab as string) === 'routes' || ((activeTab as string) === 'clientes' && clientSubTab === 'planner');
 
                           if (isPlanningPath) {
                             setGStops(prev => {
@@ -2338,7 +2338,7 @@ export function GerenteDashboard({
                               return [...prev, ...filteredNewStops];
                             });
 
-                            if (activeTab === 'routes') {
+                            if ((activeTab as string) === 'routes') {
                               // Let them stay inside routes tab so they can finish planning! Keep track of progress.
                               alert(`Excelente! Planilha de faturamento processada. ${stops.length} clientes/paradas foram salvos no Banco de Dados e adicionados ao seu Quadro de Planejamento de Rotas atual!`);
                             } else {

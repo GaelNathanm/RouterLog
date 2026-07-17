@@ -10,13 +10,13 @@ import {
 import { 
   RouteUser, Rota, GPSLocation, ChatMessage, 
   NotificationLog, PushDeliveryLog, AuditLogEntry, RoutePerformanceLog, Region, Cliente 
-} from './types';
+} from '../types';
 import { 
   INITIAL_USERS, INITIAL_ROTAS, INITIAL_LOCATIONS, 
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
   INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
-} from './mockData';
-import { db, auth } from './firebaseConfig';
+} from '../data/mockData';
+import { db, auth } from '../config/firebase';
 export { db, auth };
 
 // Export null supabase to avoid compiler errors on legacy checks
@@ -102,6 +102,10 @@ try {
   }
 } catch (e) {}
 
+export function isFirestoreOfflineFallback(): boolean {
+  return isQuotaExceeded;
+}
+
 function markQuotaExceeded() {
   if (!isQuotaExceeded) {
     isQuotaExceeded = true;
@@ -110,6 +114,10 @@ function markQuotaExceeded() {
       sessionStorage.setItem('routelog_quota_exceeded', 'true');
     } catch (e) {}
     
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('firestore_connection_fallback', { detail: { fallback: true } }));
+    }
+
     // Broadcast active fallback values to all active subscribers instantly
     for (const table of subscribersMap.keys()) {
       notifySubscribers(table, getLocalCollection(table));

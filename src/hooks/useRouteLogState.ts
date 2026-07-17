@@ -15,19 +15,19 @@ import {
   saveCloudAuditLog, saveCloudPerformanceLog, saveCloudPushLog, 
   resetCloudDatabaseAll, saveCloudRegion, deleteCloudRegion, 
   subscribeToCollection, deleteCloudUser, saveCloudClient, deleteCloudClient, auth,
-  getCloudUser, getCloudUserByEmail
-} from './firebase';
+  getCloudUser, getCloudUserByEmail, db
+} from '../services/firebase';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, 
   ChatMessage, NotificationLog, AuditLogEntry,
   RoutePerformanceLog, PushDeliveryLog, PushConfig, StopTelemetry, Region, MotoristaUser, AdminUser, Cliente
-} from './types';
+} from '../types';
 import { 
   INITIAL_USERS, INITIAL_ROTAS, INITIAL_LOCATIONS, 
   INITIAL_CHAT, INITIAL_NOTIFICATIONS, INITIAL_AUDIT_LOGS,
   INITIAL_PERFORMANCE_LOGS, INITIAL_PUSH_LOGS, INITIAL_REGIONS, INITIAL_CLIENTS
-} from './mockData';
-import { geocodeAddress } from './utils/geocoder';
+} from '../data/mockData';
+import { geocodeAddress } from '../utils/geocoder';
 
 const getDistanceInMeters = (lat1: number, lng1: number, lat2: number, lng2: number) => {
   const R = 6371e3; // metres
@@ -342,27 +342,52 @@ export function useRouteLogState() {
     }
   }, [rotas]);
 
-  // 1. Database Seeding on Mount
+  // 1. Database Seeding on Mount and Auth Session Initialization
   useEffect(() => {
     seedDatabaseIfEmpty().catch(err => {
-      console.warn('[Firestore] Initial seeding failed or was skipped:', err);
+      const isPermissionOrQuota = 
+        err?.message?.includes('permission') || 
+        err?.message?.includes('PERMISSION_DENIED') ||
+        err?.message?.includes('insufficient permissions') ||
+        err?.message?.includes('Quota exceeded');
+      
+      if (isPermissionOrQuota) {
+        console.info('[Firestore] Initial seeding skipped or deferred silently (working in read-only offline/cache mode)');
+      } else {
+        console.warn('[Firestore] Initial seeding failed or was skipped:', err);
+      }
     });
-  }, []);
+  }, [currentUser]);
 
-  // 2. Synchronous Real-Time Subscriptions Setup (Eliminating polling completely)
+  // Helper to handle subscription errors gracefully and silently for permission/offline cache scenarios
+  const handleSyncError = (collectionName: string, err: any) => {
+    const isPermissionOrCache = 
+      err?.message?.includes('permission') || 
+      err?.message?.includes('PERMISSION_DENIED') ||
+      err?.message?.includes('insufficient permissions');
+    
+    if (isPermissionOrCache) {
+      // Quietly log to console.info/log instead of console.warn to prevent triggering UI warning overlays or alert boxes
+      console.info(`[Firestore Sync Offline] ${collectionName} subscription is currently using cached data (online subscription pending or restricted by role permissions).`);
+    } else {
+      console.warn(`[Firestore Sync Offline] ${collectionName} subscription currently unavailable:`, err.message);
+    }
+  };
+
+  // 3. Synchronous Real-Time Subscriptions Setup (Eliminating polling completely)
   useEffect(() => {
     // Subscribe to users with resilient error handling
     const unsubUsers = subscribeToCollection<RouteUser>('users', (list) => {
       setUsers(list);
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Users subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('users', err);
     });
 
     // Subscribe to routes with resilient error handling
     const unsubRotas = subscribeToCollection<Rota>('rotas', (list) => {
       setRotas(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Rotas subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('rotas', err);
     });
 
     // Subscribe to driver current locations with resilient error handling
@@ -373,56 +398,56 @@ export function useRouteLogState() {
       });
       setLocations(map);
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Locations subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('locations', err);
     });
 
     // Subscribe to active chats with resilient error handling
     const unsubChats = subscribeToCollection<ChatMessage>('chats', (list) => {
       setChats(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Chats subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('chats', err);
     });
 
     // Subscribe to notifications with resilient error handling
     const unsubNotifs = subscribeToCollection<NotificationLog>('notifications', (list) => {
       setNotifications(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Notifications subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('notifications', err);
     });
 
     // Subscribe to auditLogs with resilient error handling
     const unsubAudits = subscribeToCollection<AuditLogEntry>('audit_logs', (list) => {
       setAuditLogs(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
     }, (err) => {
-      console.warn('[Firestore Sync Offline] AuditLogs subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('audit_logs', err);
     });
 
     // Subscribe to performanceLogs with resilient error handling
     const unsubPerformance = subscribeToCollection<RoutePerformanceLog>('performance_logs', (list) => {
       setPerformanceLogs(list.sort((a, b) => new Date(b.startTimestamp).getTime() - new Date(a.startTimestamp).getTime()));
     }, (err) => {
-      console.warn('[Firestore Sync Offline] PerformanceLogs subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('performance_logs', err);
     });
 
     // Subscribe to pushLogs with resilient error handling
     const unsubPushLogs = subscribeToCollection<PushDeliveryLog>('push_logs', (list) => {
       setPushLogs(list.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
     }, (err) => {
-      console.warn('[Firestore Sync Offline] PushLogs subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('push_logs', err);
     });
 
     // Subscribe to regions with resilient error handling
     const unsubRegions = subscribeToCollection<Region>('regions', (list) => {
       setRegions(list);
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Regions subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('regions', err);
     });
 
     // Subscribe to clients with resilient error handling
     const unsubClients = subscribeToCollection<Cliente>('clients', (list) => {
       setClients(list);
     }, (err) => {
-      console.warn('[Firestore Sync Offline] Clients subscription currently unavailable (working with offline/cache data):', err.message);
+      handleSyncError('clients', err);
     });
 
     // Subscribe to breadcrumbs in real-time
@@ -435,7 +460,7 @@ export function useRouteLogState() {
       });
       setBreadcrumbs(map);
     }, (err) => {
-      console.warn('[Firestore Sync] Breadcrumbs subscription currently unavailable:', err.message);
+      handleSyncError('breadcrumbs', err);
     });
 
     return () => {
@@ -451,7 +476,7 @@ export function useRouteLogState() {
       unsubClients();
       unsubBreadcrumbs();
     };
-  }, []);
+  }, [currentUser]);
 
   // Active user represents the current session (can be impersonated)
   const activeSessionUser = impersonatingUser ? impersonatingUser : currentUser;

@@ -7,7 +7,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { motion, animate } from 'motion/react';
 import { APIProvider, Map, AdvancedMarker, InfoWindow, useMap } from '@vis.gl/react-google-maps';
 import { Rota, GPSLocation, Parada, Region, UserRole } from '../types';
-import { INITIAL_REGIONS } from '../mockData';
+import { INITIAL_REGIONS } from '../data/mockData';
 import { 
   Truck, MapPin, Navigation, Warehouse, Play, Signal, 
   Filter, Info, ShieldAlert, CheckCircle2, AlertTriangle, HelpCircle, Layers, Compass

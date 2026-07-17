@@ -186,8 +186,8 @@ function InteractiveMap({ rota, driverLocation, region, onStopClick }: MapProps)
                 transform={`translate(${x}, ${y})`} 
                 className="cursor-pointer group select-none"
                 onClick={() => onStopClick?.(stop)}
-                title={`Clique para confirmar entrega para ${stop.clientName}`}
               >
+                <title>{`Clique para confirmar entrega para ${stop.clientName}`}</title>
                 {/* Ping wave for target stop */}
                 {isNextTarget && (
                   <circle r="16" fill="#f59e0b" stroke="#f59e0b" strokeWidth="2" className="animate-ping opacity-35" />

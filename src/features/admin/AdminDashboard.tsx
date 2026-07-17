@@ -6,9 +6,9 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, NotificationLog, 
   AuditLogEntry, RoutePerformanceLog, PushDeliveryLog, PushConfig, MotoristaUser, Region, AdminUser, Cliente 
-} from '../types';
-import ClientImporter from './ClientImporter';
-import ClienteManager from './ClienteManager';
+} from '../../types';
+import ClientImporter from '../../components/ClientImporter';
+import ClienteManager from '../../components/ClienteManager';
 import { 
   Users, User, TrendingUp, AlertTriangle, Globe, MapPin, Eye, ShieldCheck, 
   Trash2, AlertCircle, Share2, Navigation, CheckCircle, Send, MessageSquare, 
@@ -16,8 +16,8 @@ import {
   Route, Compass, Bell, Settings, Layers, Calendar, BarChart3, Clock, AlertOctagon, HelpCircle, Truck, Signal,
   Download, Printer, Mic, Square, Pause, Volume2, SlidersHorizontal, Camera, RefreshCw, X, FileSpreadsheet
 } from 'lucide-react';
-import RouteMap from './RouteMap';
-import WelcomeTutorial from './WelcomeTutorial';
+import RouteMap from '../../components/RouteMap';
+import WelcomeTutorial from '../../components/WelcomeTutorial';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 

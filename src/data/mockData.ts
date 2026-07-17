@@ -7,7 +7,7 @@ import {
   UserRole, RouteUser, Rota, ChatMessage, NotificationLog, 
   AuditLogEntry, GPSLocation, RoutePerformanceLog, PushDeliveryLog, 
   PushNotificationTemplate, Region
-} from './types';
+} from '../types';
 
 export const INITIAL_USERS: RouteUser[] = [
   // Super Admin
@@ -20,7 +20,48 @@ export const INITIAL_USERS: RouteUser[] = [
     role: UserRole.ADMIN,
     status: 'active',
     createdAt: '2026-01-10T08:00:00Z'
-  }
+  },
+  // Gerente Regional
+  {
+    id: 'gerente_1',
+    name: 'Mariana Souza (Gerente)',
+    email: 'gerente@routelog.com',
+    phone: '+55 (31) 97777-2222',
+    address: 'Av. Contorno, 4000 - Belo Horizonte, MG',
+    role: UserRole.GERENTE,
+    status: 'active',
+    createdAt: '2026-01-11T08:00:00Z',
+    region: 'ES/MG'
+  } as any,
+  // Motorista
+  {
+    id: 'driver_lucas',
+    name: 'Lucas Silva (Motorista)',
+    email: 'motorista@routelog.com',
+    phone: '+55 (31) 96666-3333',
+    address: 'Rua das Flores, Betim - Betim, MG',
+    role: UserRole.MOTORISTA,
+    status: 'active',
+    createdAt: '2026-01-12T08:00:00Z',
+    region: 'GV1',
+    cnh: 'CNH-123456789',
+    cnhCategory: 'D',
+    cnhExpiration: '2031-10-10',
+    vehicleModel: 'Mercedes-Benz Accelo',
+    plate: 'RTL-4G21'
+  } as any,
+  // Vendedor
+  {
+    id: 'vendedor_1',
+    name: 'Thiago Neves (Vendedor)',
+    email: 'vendedor@routelog.com',
+    phone: '+55 (31) 95555-4444',
+    address: 'Rua da Bahia, 100 - Belo Horizonte, MG',
+    role: UserRole.VENDEDOR,
+    status: 'active',
+    createdAt: '2026-01-13T08:00:00Z',
+    region: 'ES/MG'
+  } as any
 ];
 
 export const INITIAL_ROTAS: Rota[] = [

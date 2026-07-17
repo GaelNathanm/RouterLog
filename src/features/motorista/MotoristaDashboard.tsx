@@ -6,25 +6,25 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   UserRole, RouteUser, Rota, Parada, GPSLocation, ChatMessage, RoutePerformanceLog, Region, Cliente, MotoristaUser
-} from '../types';
+} from '../../types';
 import { 
   Pause, Play, Volume2, Mic, Square, Truck, Navigation, CheckCircle, Phone, ArrowRight, Edit, Pencil,
   MessageSquare, Send, Camera, AlertCircle, MapPin, Map, RefreshCw, Plus, Trash2, X, Compass, Info,
   Signal, AlertTriangle, SlidersHorizontal, Route, Sparkles, Check, Clock, ChevronLeft, ChevronRight,
   User, Award, Shield, ChevronUp, ChevronDown, Loader2
 } from 'lucide-react';
-import InteractiveMap from './InteractiveMap';
-import RouteMap from './RouteMap';
+import InteractiveMap from '../../components/InteractiveMap';
+import RouteMap from '../../components/RouteMap';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   AudioPlayer, AudioRecorderButton 
-} from './DashboardUtils';
-import { db, saveCloudGPSLocation, sanitizeForFirestore } from '../firebase';
+} from '../../components/DashboardUtils';
+import { db, saveCloudGPSLocation, sanitizeForFirestore } from '../../services/firebase';
 import { 
   collection, query, where, onSnapshot, doc, updateDoc, setDoc 
 } from 'firebase/firestore';
-import { useStopConfirmation } from '../useStopConfirmation';
-import { StopConfirmationModal } from './StopConfirmationModal';
+import { useStopConfirmation } from '../../hooks/useStopConfirmation';
+import { StopConfirmationModal } from '../../components/StopConfirmationModal';
 
 // ==========================================
 // 3. MOTORISTA VIEW
@@ -316,7 +316,7 @@ export function MotoristaDashboard({
   }, [firestoreRoutes, rotas, user]);
 
   const myCreatedRoutes = useMemo(() => myRoutes.filter(r => !r.sentByGerente && r.status !== 'completed'), [myRoutes]);
-  const myReceivedRoutes = useMemo(() => myRoutes.filter(r => (r.sentByGerente === true || r.status === 'active' || r.status === 'em_andamento') && r.status !== 'completed'), [myRoutes]);
+  const myReceivedRoutes = useMemo(() => myRoutes.filter(r => (r.sentByGerente === true || r.status === 'active' || (r.status as string) === 'em_andamento') && r.status !== 'completed'), [myRoutes]);
   const myCompletedRoutes = useMemo(() => myRoutes.filter(r => r.status === 'completed'), [myRoutes]);
 
   // Helper to generate realistic timestamps mimicking the GPS timeline in the reference image
@@ -353,7 +353,7 @@ export function MotoristaDashboard({
   };
 
   const viewedRecRoute = useMemo(() => {
-    const activeRec = myReceivedRoutes.find(r => r.status === 'active' || r.status === 'em_andamento');
+    const activeRec = myReceivedRoutes.find(r => r.status === 'active' || (r.status as string) === 'em_andamento');
     if (activeRec) {
       return activeRec;
     }
@@ -371,8 +371,8 @@ export function MotoristaDashboard({
   }, [myCompletedRoutes, selectedCompletedRouteId]);
   
   const activeRoute = useMemo(() => {
-    const found = myRoutes.find(r => r.status === 'active' || r.status === 'em_andamento') || 
-                  myRoutes.find(r => r.status === 'draft' || r.status === 'agendada') || null;
+    const found = myRoutes.find(r => r.status === 'active' || (r.status as string) === 'em_andamento') || 
+                  myRoutes.find(r => r.status === 'draft' || (r.status as string) === 'agendada') || null;
     if (found) {
       return { ...found, stops };
     }
@@ -1536,7 +1536,7 @@ export function MotoristaDashboard({
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    if (viewedRecRoute.status !== 'active' && viewedRecRoute.status !== 'em_andamento') {
+                                    if (viewedRecRoute.status !== 'active' && (viewedRecRoute.status as string) !== 'em_andamento') {
                                       alert('Por favor, inicie esta rota clicando em "Iniciar Rota" abaixo para poder registrar entregas!');
                                       return;
                                     }
@@ -1848,7 +1848,7 @@ export function MotoristaDashboard({
                         <span className="text-[9px] text-slate-400 block font-mono">Recebida do Gerente Regional</span>
                       </div>
                       <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold uppercase shrink-0 ${
-                        route.status === 'active' || route.status === 'em_andamento' ? 'bg-amber-100 text-amber-800 border border-amber-200 animate-pulse' :
+                        route.status === 'active' || (route.status as string) === 'em_andamento' ? 'bg-amber-100 text-amber-800 border border-amber-200 animate-pulse' :
                         route.status === 'completed' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-slate-100 text-slate-700 border border-slate-200'
                       }`}>
                         {route.status}

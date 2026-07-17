@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { UserRole, RouteUser, Region } from '../types';
-import { REGIONS_LIST, INITIAL_REGIONS } from '../mockData';
+import { REGIONS_LIST, INITIAL_REGIONS } from '../data/mockData';
 import { ShieldAlert, User, Truck, ClipboardList, LogIn, ChevronRight, UserPlus2, RefreshCw, EyeOff } from 'lucide-react';
 import GoogleAuthButton from './GoogleAuthButton';
 

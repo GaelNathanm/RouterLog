@@ -3,6 +3,7 @@ node_modules/
 build/
 dist/
 coverage/
+.local/
 
 # OS and Log files
 .DS_Store
@@ -12,7 +13,6 @@ coverage/
 .env
 .env.local
 .env.*.local
-*.local
 
 # Firebase Private Keys and JSON credentials
 *credentials*.json

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Parada } from './types';
+import { Parada } from '../types';
 
 export function useStopConfirmation(activeTab: string) {
   const signatureCanvasRef = useRef<HTMLCanvasElement | null>(null);

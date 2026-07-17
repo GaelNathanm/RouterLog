@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { APIProvider, Map, AdvancedMarker, InfoWindow, Pin, useAdvancedMarkerRef, useMap } from '@vis.gl/react-google-maps';
-import { db, subscribeToCollection } from '../firebase';
+import { db, subscribeToCollection } from '../services/firebase';
 import { Cliente } from '../types';
 import { Loader2, AlertCircle, MapPin, Phone, Compass, Info, CheckCircle2, AlertTriangle, Layers } from 'lucide-react';
 

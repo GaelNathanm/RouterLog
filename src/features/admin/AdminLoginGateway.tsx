@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ShieldAlert, Compass, Keyboard, Lock, UserCheck, AlertOctagon, HelpCircle } from 'lucide-react';
-import { RouteUser } from '../types';
+import { RouteUser } from '../../types';
 
 interface AdminLoginGatewayProps {
   onLogin: (email: string, password?: string) => Promise<{ success: boolean; error?: string; user?: RouteUser }> | any;
