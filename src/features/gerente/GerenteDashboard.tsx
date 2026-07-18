@@ -22,6 +22,7 @@ import ClientImporter from '../../components/ClientImporter';
 import ClienteManager from '../../components/ClienteManager';
 import MapClientes from '../../components/MapClientes';
 import WelcomeTutorial from '../../components/WelcomeTutorial';
+import DashboardSkeleton from '../../components/DashboardSkeleton';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -61,6 +62,7 @@ interface GerenteProps {
   onDeleteRoute: (id: string) => void;
   onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
   onStartRoute: (id: string) => void;
+  isFirestoreLoading?: boolean;
 }
 
 export function GerenteDashboard({ 
@@ -85,8 +87,13 @@ export function GerenteDashboard({
   onUpdateRoute,
   onDeleteRoute,
   onOptimize,
-  onStartRoute
+  onStartRoute,
+  isFirestoreLoading
 }: GerenteProps) {
+  if (isFirestoreLoading) {
+    return <DashboardSkeleton role="gerente" />;
+  }
+
   const [chatInput, setChatInput] = useState('');
   const [activeTab, setActiveTab] = useState<'map' | 'routes' | 'chat' | 'push_config' | 'analytics' | 'clientes'>('map');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('google');

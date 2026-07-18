@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { useNavigate } from 'react-router-dom';
-import { auth } from '../../config/firebase';
+import { auth, db } from '../../config/firebase';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../../context/AuthContext';
 import { Compass, ShieldAlert, LogIn, User, Truck, ClipboardList, AlertCircle, HelpCircle } from 'lucide-react';
 import GoogleAuthButton from '../../components/GoogleAuthButton';
@@ -87,38 +88,85 @@ export const Login: React.FC<LoginProps> = ({ users = [] }) => {
   const handlePresetLogin = async (presetEmail: string) => {
     setError('');
     setIsSubmitting(true);
+    
+    // Lista de senhas padrão para testar na simulação principal
+    const possiblePasswords = [
+      '123456',
+      presetEmail.split('@')[0],
+      'routelog123',
+      'admin2026'
+    ];
+
+    for (const pass of possiblePasswords) {
+      try {
+        await signInWithEmailAndPassword(auth, presetEmail, pass);
+        showToast('Simulação iniciada com sucesso!', 'success', 'Acesso Simulado');
+        return; // Sucesso, sai da função
+      } catch (err) {
+        console.warn(`Tentativa de simulação para ${presetEmail} falhou com a senha "${pass}", tentando próxima...`);
+      }
+    }
+
+    // Se todas as tentativas falharam para a conta principal (ex: e-mail em uso com senha desconhecida)
+    // Criamos/utilizamos uma conta simulada dedicada garantida
+    console.warn("Todas as senhas padrão falharam para o e-mail principal. Criando/usando conta simulada dedicada...");
+    const fallbackEmail = presetEmail.replace('@', '.simulado@');
+    
     try {
-      // 1. Tenta fazer login com a senha padrão de simulação
-      await signInWithEmailAndPassword(auth, presetEmail, '123456');
+      // Tenta logar com a conta simulada secundária
+      await signInWithEmailAndPassword(auth, fallbackEmail, '123456');
       showToast('Simulação iniciada com sucesso!', 'success', 'Acesso Simulado');
-    } catch (err: any) {
-      console.warn("Erro ao fazer login na conta simulada, tentando criar o usuário no Firebase Auth...", err);
-      
-      // Se falhar porque o usuário não existe ou as credenciais são inválidas, criamos a conta no Firebase Auth
-      if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+    } catch (fallbackErr: any) {
+      // Se não existir, criamos ela na hora
+      if (fallbackErr.code === 'auth/user-not-found' || fallbackErr.code === 'auth/invalid-credential') {
         try {
-          // 2. Cria o usuário com a senha de desenvolvimento padrão
-          await createUserWithEmailAndPassword(auth, presetEmail, '123456');
-          showToast('Conta simulada criada e logada com sucesso!', 'success', 'Acesso Simulado');
-        } catch (regErr: any) {
-          console.error("Erro ao registrar conta simulada no Firebase Auth:", regErr);
+          const userCredential = await createUserWithEmailAndPassword(auth, fallbackEmail, '123456');
+          const uid = userCredential.user.uid;
           
-          // Se falhar porque o e-mail já existe (pode ser outra senha), tenta usar o prefixo do e-mail como senha
-          if (regErr.code === 'auth/email-already-in-use') {
-            try {
-              const defaultPass = presetEmail.split('@')[0];
-              await signInWithEmailAndPassword(auth, presetEmail, defaultPass);
-              showToast('Simulação iniciada com sucesso!', 'success', 'Acesso Simulado');
-              return;
-            } catch (innerErr) {
-              console.error("Erro ao logar com senha baseada em e-mail:", innerErr);
-            }
-          }
-          setError(`Não foi possível acessar a conta simulada. Erro: ${regErr.message || regErr}`);
+          // Busca o perfil original correspondente no mock/state para clonar
+          const templateUser = users.find(u => u.email.toLowerCase() === presetEmail.toLowerCase());
+          
+          const rolePrefix = presetEmail.split('@')[0].toLowerCase();
+          let role = 2; // Motorista por padrão
+          if (rolePrefix.includes('admin')) role = 0;
+          else if (rolePrefix.includes('gerente')) role = 1;
+          else if (rolePrefix.includes('vendedor')) role = 3;
+
+          const newProfile = templateUser ? {
+            ...templateUser,
+            id: uid,
+            email: fallbackEmail,
+            status: 'active'
+          } : {
+            id: uid,
+            name: rolePrefix.charAt(0).toUpperCase() + rolePrefix.slice(1) + ' (Simulado)',
+            email: fallbackEmail,
+            phone: '+55 (31) 98888-1111',
+            address: 'Belo Horizonte, MG',
+            role: role,
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            region: 'GV1',
+            ...(role === 2 ? {
+              cnh: 'CNH-123456789',
+              cnhCategory: 'D',
+              cnhExpiration: '2031-10-10',
+              vehicleModel: 'Mercedes-Benz Accelo',
+              plate: 'RTL-4G21'
+            } : {})
+          };
+
+          // Salva o novo perfil no Firestore sob o novo UID do usuário
+          await setDoc(doc(db, 'users', uid), newProfile);
+          showToast('Conta simulada criada e perfil ativado no Firestore!', 'success', 'Acesso Simulado');
+        } catch (regErr: any) {
+          console.error("Erro ao registrar ou ativar conta simulada secundária:", regErr);
+          setError(`Erro fatal ao iniciar simulação: ${regErr.message || regErr}`);
           setIsSubmitting(false);
         }
       } else {
-        setError(`Erro ao logar com conta simulada: ${err.message || err}`);
+        console.error("Erro inesperado ao conectar à conta simulada secundária:", fallbackErr);
+        setError(`Erro inesperado: ${fallbackErr.message || fallbackErr}`);
         setIsSubmitting(false);
       }
     }

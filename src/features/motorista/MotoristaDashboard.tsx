@@ -16,6 +16,7 @@ import {
 import InteractiveMap from '../../components/InteractiveMap';
 import RouteMap from '../../components/RouteMap';
 import { motion, AnimatePresence } from 'motion/react';
+import DashboardSkeleton from '../../components/DashboardSkeleton';
 import { 
   AudioPlayer, AudioRecorderButton 
 } from '../../components/DashboardUtils';
@@ -43,6 +44,7 @@ interface MotoristaProps {
   onOptimize: (stops: Parada[], oLat: number, oLng: number) => Promise<Parada[]>;
   offlineQueueLength?: number;
   onUpdateUser?: (updatedUser: RouteUser) => Promise<void> | void;
+  isFirestoreLoading?: boolean;
 }
 
 export const GUARIBA_LOCATIONS = [
@@ -54,8 +56,12 @@ export const GUARIBA_LOCATIONS = [
 ];
 
 export function MotoristaDashboard({ 
-  user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0, onUpdateUser 
+  user, rotas, chats, locations, performanceLogs, onCreateRoute, onUpdateRoute, onDeleteRoute, onStartRoute, onPostMessage, onOptimize, offlineQueueLength = 0, onUpdateUser, isFirestoreLoading 
 }: MotoristaProps) {
+  if (isFirestoreLoading || !user) {
+    return <DashboardSkeleton role="motorista" />;
+  }
+
   const [activeTab, setActiveTab] = useState<'nova' | 'salvas' | 'rotarec' | 'finalizadas'>('salvas');
   const [mapMode, setMapMode] = useState<'vector' | 'google'>('vector');
   
@@ -189,7 +195,7 @@ export function MotoristaDashboard({
   
   // Create state for Stop fields inside Nova Rota
   const [routeName, setRouteName] = useState('Super Entrega ' + new Date().toLocaleDateString('pt-BR'));
-  const [origin, setOrigin] = useState('CD Central ' + (user as any).region + ' - Av. dos Camaras, 513, Santo Antonio, Cariacica-ES');
+  const [origin, setOrigin] = useState('CD Central ' + ((user as any)?.region || 'GV1') + ' - Av. dos Camaras, 513, Santo Antonio, Cariacica-ES');
   const [originLat, setOriginLat] = useState(-20.302534);
   const [originLng, setOriginLng] = useState(-40.401630);
 

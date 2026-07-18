@@ -14,6 +14,7 @@ import InteractiveMap from '../../components/InteractiveMap';
 import RouteMap from '../../components/RouteMap';
 import { motion } from 'motion/react';
 import { AudioPlayer, AudioRecorderButton } from '../../components/DashboardUtils';
+import DashboardSkeleton from '../../components/DashboardSkeleton';
 
 interface VendedorProps {
   user: RouteUser;
@@ -22,9 +23,14 @@ interface VendedorProps {
   users: RouteUser[];
   locations: { [drvId: string]: GPSLocation };
   onPostMessage: (text: string, audioUrl?: string) => void;
+  isFirestoreLoading?: boolean;
 }
 
-export function VendedorDashboard({ user, rotas, chats, users, locations, onPostMessage }: VendedorProps) {
+export function VendedorDashboard({ user, rotas, chats, users, locations, onPostMessage, isFirestoreLoading }: VendedorProps) {
+  if (isFirestoreLoading) {
+    return <DashboardSkeleton role="vendedor" />;
+  }
+
   const [activeTab, setActiveTab] = useState<'map' | 'driver' | 'chat'>('map');
   const [mobileFocus, setMobileFocus] = useState<'actions' | 'map'>('actions');
   const [chatInp, setChatInp] = useState('');

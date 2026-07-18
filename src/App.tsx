@@ -71,7 +71,8 @@ function AppContent() {
     handleOptimizeRoute,
     handleStartRoute,
     handlePostMessage,
-    resetAllData
+    resetAllData,
+    isFirestoreLoading
   } = useRouteLogState();
 
   const navigate = useNavigate();
@@ -521,6 +522,7 @@ function AppContent() {
         <Route path="/admin/dashboard" element={
           <LayoutWrapper>
             <AdminDashboard
+              isFirestoreLoading={isFirestoreLoading}
               users={users}
               rotas={rotas}
               auditLogs={auditLogs}
@@ -554,6 +556,7 @@ function AppContent() {
         <Route path="/gerente/dashboard" element={
           <LayoutWrapper>
             <GerenteDashboard
+              isFirestoreLoading={isFirestoreLoading}
               user={activeSessionUser!}
               users={users}
               rotas={rotas}
@@ -586,6 +589,7 @@ function AppContent() {
         <Route path="/motorista/painel" element={
           <LayoutWrapper>
             <MotoristaDashboard
+              isFirestoreLoading={isFirestoreLoading}
               user={activeSessionUser!}
               rotas={rotas}
               chats={chats}
@@ -609,6 +613,7 @@ function AppContent() {
         <Route path="/vendedor/painel" element={
           <LayoutWrapper>
             <VendedorDashboard
+              isFirestoreLoading={isFirestoreLoading}
               user={activeSessionUser!}
               rotas={rotas}
               chats={chats}

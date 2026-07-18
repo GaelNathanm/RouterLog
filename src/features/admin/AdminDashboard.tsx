@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import RouteMap from '../../components/RouteMap';
 import WelcomeTutorial from '../../components/WelcomeTutorial';
+import DashboardSkeleton from '../../components/DashboardSkeleton';
 import { ResponsiveContainer, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -307,6 +308,7 @@ export interface AdminProps {
   clients?: Cliente[];
   onSaveClient?: (client: Cliente) => void;
   onDeleteClient?: (clientId: string) => void;
+  isFirestoreLoading?: boolean;
 }
 
 export function AdminDashboard({ 
@@ -330,8 +332,13 @@ export function AdminDashboard({
   onSendPush,
   clients = [],
   onSaveClient,
-  onDeleteClient
+  onDeleteClient,
+  isFirestoreLoading
 }: AdminProps) {
+  if (isFirestoreLoading) {
+    return <DashboardSkeleton role="admin" />;
+  }
+
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState<'users' | 'analytics' | 'chats' | 'audits' | 'desempenho' | 'mapa' | 'regioes' | 'clientes'>('users');
   const [adminSelectedRegion, setAdminSelectedRegion] = useState<string>('GV1');

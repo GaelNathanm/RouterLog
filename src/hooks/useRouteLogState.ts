@@ -75,6 +75,7 @@ export function useRouteLogState() {
   const [regions, setRegions] = useState<Region[]>(INITIAL_REGIONS);
   const [clients, setClients] = useState<Cliente[]>(INITIAL_CLIENTS);
   const [offlineQueueLength, setOfflineQueueLength] = useState<number>(0);
+  const [isFirestoreLoading, setIsFirestoreLoading] = useState<boolean>(true);
 
   const [pushConfig, setPushConfig] = useState<PushConfig>(() => {
     const saved = localStorage.getItem('routelog_push_config');
@@ -376,18 +377,37 @@ export function useRouteLogState() {
 
   // 3. Synchronous Real-Time Subscriptions Setup (Eliminating polling completely)
   useEffect(() => {
+    let loadedCount = 0;
+    const TOTAL_COLLECTIONS_TO_WAIT = 5; // Wait for users, rotas, locations, regions, clients
+
+    const markLoaded = () => {
+      loadedCount++;
+      if (loadedCount >= TOTAL_COLLECTIONS_TO_WAIT) {
+        setIsFirestoreLoading(false);
+      }
+    };
+
+    // Timeout fallback to guarantee the skeleton screens disappear after 1.5 seconds max
+    const timeoutId = setTimeout(() => {
+      setIsFirestoreLoading(false);
+    }, 1500);
+
     // Subscribe to users with resilient error handling
     const unsubUsers = subscribeToCollection<RouteUser>('users', (list) => {
       setUsers(list);
+      markLoaded();
     }, (err) => {
       handleSyncError('users', err);
+      markLoaded();
     });
 
     // Subscribe to routes with resilient error handling
     const unsubRotas = subscribeToCollection<Rota>('rotas', (list) => {
       setRotas(list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+      markLoaded();
     }, (err) => {
       handleSyncError('rotas', err);
+      markLoaded();
     });
 
     // Subscribe to driver current locations with resilient error handling
@@ -397,8 +417,10 @@ export function useRouteLogState() {
         map[loc.driverId] = loc;
       });
       setLocations(map);
+      markLoaded();
     }, (err) => {
       handleSyncError('locations', err);
+      markLoaded();
     });
 
     // Subscribe to active chats with resilient error handling
@@ -439,15 +461,19 @@ export function useRouteLogState() {
     // Subscribe to regions with resilient error handling
     const unsubRegions = subscribeToCollection<Region>('regions', (list) => {
       setRegions(list);
+      markLoaded();
     }, (err) => {
       handleSyncError('regions', err);
+      markLoaded();
     });
 
     // Subscribe to clients with resilient error handling
     const unsubClients = subscribeToCollection<Cliente>('clients', (list) => {
       setClients(list);
+      markLoaded();
     }, (err) => {
       handleSyncError('clients', err);
+      markLoaded();
     });
 
     // Subscribe to breadcrumbs in real-time
@@ -464,6 +490,7 @@ export function useRouteLogState() {
     });
 
     return () => {
+      clearTimeout(timeoutId);
       unsubUsers();
       unsubRotas();
       unsubLocations();
@@ -1758,6 +1785,7 @@ export function useRouteLogState() {
     handlePostMessage,
     resetAllData,
     offlineQueueLength,
-    setOfflineQueueLength
+    setOfflineQueueLength,
+    isFirestoreLoading
   };
 }
